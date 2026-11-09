@@ -492,6 +492,15 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
   }
 
   if (fileStat.method == ZIP_METHOD_DEFLATED) {
+    // Claim the 32KB inflate window before the chunk buffers. On a fragmented
+    // heap (e.g. Home, maxAlloc ~34KB) taking the small buffers first can carve
+    // the only run large enough for the window, so every cover extraction failed.
+    InflateStream inflate;
+    if (!inflate.init(true)) {
+      LOG_ERR("ZIP", "Failed to init inflate stream for %s", filename);
+      return false;
+    }
+
     auto* fileReadBuffer = static_cast<uint8_t*>(malloc(chunkSize));
     if (!fileReadBuffer) {
       LOG_ERR("ZIP", "Failed to allocate memory for zip file read buffer");
@@ -511,13 +520,6 @@ bool ZipFile::readFileToStream(const char* filename, Print& out, const size_t ch
     ctx.readBuf = fileReadBuffer;
     ctx.readBufSize = chunkSize;
 
-    InflateStream inflate;
-    if (!inflate.init(true)) {
-      LOG_ERR("ZIP", "Failed to init inflate stream for %s", filename);
-      free(outputBuffer);
-      free(fileReadBuffer);
-      return false;
-    }
     inflate.setFill(zipFillCallback, &ctx);
 
     bool success = false;
