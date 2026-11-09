@@ -12,6 +12,7 @@ Import("env")
 BUILD_VERSION_JSON_PATH = "artifacts/build-version.json"
 RELEASE_COUNTER_FILE_TEMPLATE = ".release-counter-{base}.txt"
 RELEASE_DRY_RUN_ENV = "VCODEX_RELEASE_DRY_RUN"
+FORK_VERSION_SUFFIX = "-Roghj"
 
 
 def load_build_metadata(project_dir: Path) -> tuple[str, str, int | None]:
@@ -118,7 +119,12 @@ def package_vcodex_bin(source, target, env):
     board_suffix = ""
     if pio_env.startswith("x4pro") and not safe_version.endswith("-x4pro"):
         board_suffix = "-x4pro"
-    artifact_stem = f"{safe_version}-cpr-vcodex{board_suffix}"
+    # Roghj fork versions already carry their name (1.6.5.7-Roghj), which is
+    # also the release tag, so the artifact is <tag>.bin without another suffix.
+    if safe_version.endswith(FORK_VERSION_SUFFIX):
+        artifact_stem = f"{safe_version}{board_suffix}"
+    else:
+        artifact_stem = f"{safe_version}-cpr-vcodex{board_suffix}"
 
     artifact_name = f"{artifact_stem}.bin"
     artifact_path = output_dir / artifact_name

@@ -14,12 +14,14 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_REPO = "franssjz/cpr-vcodex"
+DEFAULT_REPO = "roghj/cpr-vcodex"
 # Historic name kept for callers that still import it; it is the C3 slot size.
 APP_PARTITION_SIZE = 6_553_600
 MIN_FIRMWARE_SIZE = 1_000_000
-VERSION_RE = re.compile(r"\b\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-[0-9A-Za-z._-]*cpr-vcodex\b")
-FIRMWARE_TAG_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-cpr-vcodex$")
+# Roghj fork tags end in "-Roghj"; upstream "-cpr-vcodex" tags stay accepted.
+FIRMWARE_TAG_SUFFIXES = ("-Roghj", "-cpr-vcodex")
+VERSION_RE = re.compile(r"\b\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-(?:[0-9A-Za-z._-]*cpr-vcodex|Roghj)\b")
+FIRMWARE_TAG_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-(?:cpr-vcodex|Roghj)$")
 # Release asset URLs retain suffix awareness so old X4 Pro links are not ever
 # rewritten to the C3 image while X4 Pro distribution is withdrawn.
 DOWNLOAD_URL_RE = re.compile(
@@ -177,7 +179,9 @@ def firmware_tag_sort_key(tag: str) -> tuple[int, int, int, int, int, str] | Non
     if not FIRMWARE_TAG_RE.fullmatch(tag):
         return None
 
-    prefix = tag.removesuffix("-cpr-vcodex")
+    prefix = tag
+    for suffix in FIRMWARE_TAG_SUFFIXES:
+        prefix = prefix.removesuffix(suffix)
     match = FIRMWARE_VERSION_PREFIX_RE.match(prefix)
     if not match:
         return None

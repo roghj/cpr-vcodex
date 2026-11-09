@@ -115,9 +115,9 @@ def get_base_version(project_dir: Path) -> str:
 
 
 def parse_release_tag(tag: str, base_version: str) -> int:
-    match = re.fullmatch(rf"{re.escape(base_version)}\.(\d+)-cpr-vcodex", tag)
+    match = re.fullmatch(rf"{re.escape(base_version)}\.(\d+)-(?:Roghj|cpr-vcodex)", tag)
     if not match:
-        fail(f"Tag must match {base_version}.<release>-cpr-vcodex, got {tag!r}")
+        fail(f"Tag must match {base_version}.<release>-Roghj, got {tag!r}")
     return int(match.group(1))
 
 
@@ -323,7 +323,7 @@ def validate_autoflash_manifest(project_dir: Path) -> None:
     c3_size, c3_digest = _sha256_file(c3_path)
     if manifest.get("firmwareUrl") != f"firmware/{c3_target.local_firmware}":
         fail(f"Auto-flash manifest must use local firmware/{c3_target.local_firmware}")
-    expected_ota_url = f"https://franssjz.github.io/cpr-vcodex/firmware/{c3_target.local_firmware}"
+    expected_ota_url = f"https://roghj.github.io/cpr-vcodex/firmware/{c3_target.local_firmware}"
     if manifest.get("downloadUrl") != expected_ota_url:
         fail(f"Auto-flash manifest OTA downloadUrl must use the redirect-free Pages copy: {expected_ota_url}")
     if manifest.get("size") != c3_size:

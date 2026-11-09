@@ -46,6 +46,11 @@ SUPPORTED_ENVS = (
     "x4pro-gh_release_rc",
 )
 INITIAL_RELEASE_NUMBER = 0
+# Roghj fork: release tags and on-device version names end in "-Roghj"
+# (e.g. 1.6.5.7-Roghj). Upstream "-cpr-vcodex" tags are still recognised when
+# deriving the current release number from tags or README text.
+FORK_VERSION_SUFFIX = "-Roghj"
+RELEASE_TAG_SUFFIX_RE = r"-(?:Roghj|cpr-vcodex)"
 
 
 def warn(msg):
@@ -115,14 +120,14 @@ def _read_counter(counter_path, default_value):
 
 
 def _extract_release_number(base_version, text):
-    match = re.search(rf"{re.escape(base_version)}\.(\d+)-cpr-vcodex", text)
+    match = re.search(rf"{re.escape(base_version)}\.(\d+){RELEASE_TAG_SUFFIX_RE}", text)
     return int(match.group(1)) if match else None
 
 
 def _latest_tag_release_number(project_dir, base_version):
     try:
         tags = subprocess.check_output(
-            ["git", "tag", "--list", f"{base_version}.*-cpr-vcodex"],
+            ["git", "tag", "--list", f"{base_version}.*-cpr-vcodex", f"{base_version}.*{FORK_VERSION_SUFFIX}"],
             text=True,
             stderr=subprocess.PIPE,
             cwd=project_dir,
@@ -203,9 +208,11 @@ def release_number_from_tag(base_version):
     if not tag:
         return None
 
-    match = re.fullmatch(rf"{re.escape(base_version)}\.(\d+)-cpr-vcodex", tag)
+    match = re.fullmatch(rf"{re.escape(base_version)}\.(\d+){RELEASE_TAG_SUFFIX_RE}", tag)
     if not match:
-        raise ValueError(f"Release tag {tag!r} does not match expected pattern {base_version}.<release>-cpr-vcodex")
+        raise ValueError(
+            f"Release tag {tag!r} does not match expected pattern {base_version}.<release>{FORK_VERSION_SUFFIX}"
+        )
 
     return int(match.group(1)), tag
 
@@ -303,6 +310,9 @@ def inject_version(env):
     base_version = get_base_version(project_dir)
     kind_env, is_x4pro = split_env_name(env_name)
     kind_suffix = X4PRO_VERSION_SUFFIX if is_x4pro else ""
+    # The ESP app descriptor holds at most 31 version characters, so the fork
+    # name is added to the C3 (X4/X3) builds only; X4 Pro builds are compile-only.
+    fork_suffix = "" if is_x4pro else FORK_VERSION_SUFFIX
 
     if kind_env == "default":
         release_number, release_counter_path = get_dev_release_number(project_dir, base_version)
@@ -311,7 +321,7 @@ def inject_version(env):
         # Dev builds of both targets share the release line and dev counter;
         # the x4pro suffix keeps the version strings (and packaged artifact
         # names) distinct so S3 and C3 dev binaries never collide.
-        version_string = f"{base_version}.{release_number}.dev{build_counter}-{short_sha}{kind_suffix}"
+        version_string = f"{base_version}.{release_number}.dev{build_counter}-{short_sha}{kind_suffix}{fork_suffix}"
         build_kind = "dev" + kind_suffix
         print(f"CPR-vCodex release line: {release_number} ({release_counter_path})")
     elif kind_env == "gh_release":
@@ -324,20 +334,20 @@ def inject_version(env):
         build_counter = release_number
         # Release version strings are identical for C3 and X4 Pro: the tag is
         # shared and package_vcodex_bin.py adds the "-x4pro" artifact suffix.
-        version_string = f"{base_version}.{release_number}"
+        version_string = f"{base_version}.{release_number}{fork_suffix}"
         build_kind = "release" + kind_suffix
     elif kind_env == "gh_release_rc":
         rc_hash = os.environ.get("CROSSPOINT_RC_HASH", "unknown")
         release_number, release_counter_path = get_current_release_number(project_dir, base_version)
         build_counter = release_number
-        version_string = f"{base_version}-rc+{rc_hash}"
+        version_string = f"{base_version}-rc+{rc_hash}{fork_suffix}"
         build_kind = "rc" + kind_suffix
         counter_path = "CROSSPOINT_RC_HASH env"
         print(f"CPR-vCodex release line: {release_number} ({release_counter_path})")
     else:
         release_number, release_counter_path = get_current_release_number(project_dir, base_version)
         build_counter = release_number
-        version_string = f"{base_version}-slim"
+        version_string = f"{base_version}-slim{fork_suffix}"
         build_kind = "slim"
         counter_path = release_counter_path
 

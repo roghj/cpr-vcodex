@@ -5,7 +5,8 @@ import re
 from pathlib import Path
 
 
-TAG_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)-cpr-vcodex$")
+TAG_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)-(?:cpr-vcodex|Roghj)$")
+REPO = "roghj/cpr-vcodex"
 BREAK_RE = re.compile(r"\s*<br\s*/?>\s*", re.IGNORECASE)
 
 
@@ -31,11 +32,19 @@ def extract_changes(changelog: str, version: str) -> str:
 
 def render_release_notes(changelog_path: Path, tag: str) -> str:
     version = version_from_tag(tag)
-    changes = extract_changes(changelog_path.read_text(encoding="utf-8"), version)
+    changelog = changelog_path.read_text(encoding="utf-8")
+    if tag.endswith("-Roghj"):
+        # Roghj releases use a row named after the full tag (`1.6.5.7-Roghj`);
+        # without one, publish a short generic note instead of failing.
+        try:
+            changes = extract_changes(changelog, tag)
+        except ValueError:
+            changes = f"Versão Roghj baseada no CPR-vCodex {version}."
+    else:
+        changes = extract_changes(changelog, version)
     return (
         f"## Changes\n\n{changes}\n\n"
-        f"[Full changelog](https://github.com/franssjz/cpr-vcodex/blob/{tag}/CHANGELOG.md) · "
-        "[Auto Flash](https://franssjz.github.io/cpr-vcodex/flash.html)\n"
+        f"[Full changelog](https://github.com/{REPO}/blob/{tag}/CHANGELOG.md)\n"
     )
 
 

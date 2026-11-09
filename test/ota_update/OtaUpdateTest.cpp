@@ -250,9 +250,9 @@ TEST_F(OtaUpdate, UsesForkManifestFallbackAndItsExactImageUrl) {
   failPrimaryManifest = true;
   EXPECT_EQ(install(), OtaUpdater::OK);
   ASSERT_EQ(requestedUrls.size(), 2u);
-  EXPECT_EQ(requestedUrls[0], "https://franssjz.github.io/cpr-vcodex/firmware/manifest.json");
+  EXPECT_EQ(requestedUrls[0], "https://roghj.github.io/cpr-vcodex/firmware/manifest.json");
   EXPECT_EQ(requestedUrls[1],
-            "https://raw.githubusercontent.com/franssjz/cpr-vcodex/master/docs/firmware/manifest.json");
+            "https://raw.githubusercontent.com/roghj/cpr-vcodex/master/docs/firmware/manifest.json");
   EXPECT_EQ(imageUrl, "https://example.com/firmware.bin");
   EXPECT_EQ(std::string(board_tag::boardName(), board_tag::boardNameLen()), "x4");
 }

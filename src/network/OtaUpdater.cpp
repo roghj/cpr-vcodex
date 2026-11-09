@@ -24,10 +24,12 @@
 #include "version.h"
 
 namespace {
-constexpr char firmwareManifestUrl[] = "https://franssjz.github.io/cpr-vcodex/firmware/manifest.json";
+// Roghj fork: online updates come from roghj/cpr-vcodex releases (published
+// through the fork's GitHub Pages manifest), not from the upstream fork.
+constexpr char firmwareManifestUrl[] = "https://roghj.github.io/cpr-vcodex/firmware/manifest.json";
 constexpr char firmwareManifestFallbackUrl[] =
-    "https://raw.githubusercontent.com/franssjz/cpr-vcodex/master/docs/firmware/manifest.json";
-constexpr char latestReleaseUrl[] = "https://api.github.com/repos/franssjz/cpr-vcodex/releases/latest";
+    "https://raw.githubusercontent.com/roghj/cpr-vcodex/master/docs/firmware/manifest.json";
+constexpr char latestReleaseUrl[] = "https://api.github.com/repos/roghj/cpr-vcodex/releases/latest";
 
 struct ParsedVersion {
   int parts[4] = {0, 0, 0, 0};
