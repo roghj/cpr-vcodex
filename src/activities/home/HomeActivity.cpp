@@ -362,24 +362,39 @@ uint8_t getCarouselBookProgressPercent(const RecentBook& recentBook) {
 uint32_t getCarouselFrameHash(const std::vector<RecentBook>& books, const int centerIdx, const int screenWidth,
                               const int screenHeight, const size_t bufferSize, const bool darkMode) {
   uint32_t hash = FNV1A_OFFSET;
-  hash = fnv1aString(hash, "lyra-carousel-frame-v7-progress-badge");
+  hash = fnv1aString(hash, "lyra-carousel-frame-v8-visible-books");
   hash = fnv1aU32(hash, static_cast<uint32_t>(screenWidth));
   hash = fnv1aU32(hash, static_cast<uint32_t>(screenHeight));
   hash = fnv1aU32(hash, static_cast<uint32_t>(bufferSize));
   hash = fnv1aU32(hash, darkMode ? 1U : 0U);
   hash = fnv1aU32(hash, static_cast<uint32_t>(SETTINGS.homeBookSource));
-  hash = fnv1aU32(hash, static_cast<uint32_t>(books.size()));
+  const int bookCount = static_cast<int>(books.size());
+  hash = fnv1aU32(hash, static_cast<uint32_t>(bookCount));
   hash = fnv1aU32(hash, static_cast<uint32_t>(centerIdx));
+  if (bookCount <= 0 || centerIdx < 0 || centerIdx >= bookCount) {
+    return hash;
+  }
 
-  for (const RecentBook& book : books) {
-    hash = fnv1aString(hash, book.bookId);
+  // Key the frame only on what it draws: the center book (cover, progress
+  // badge, author, title) and the side covers. Hashing every recent book's
+  // progress made reading one book invalidate every cached frame, so each
+  // neighbour was re-rendered on its first visit after returning Home.
+  const RecentBook& center = books[centerIdx];
+  hash = fnv1aString(hash, center.bookId);
+  hash = fnv1aString(hash, center.path);
+  hash = fnv1aString(hash, center.title);
+  hash = fnv1aString(hash, center.author);
+  hash = fnv1aString(hash, center.coverBmpPath);
+  hash = hashCarouselThumbState(hash, center);
+  hash = fnv1aByte(hash, getCarouselBookProgressPercent(center));
+
+  const auto hashSideCover = [&hash](const RecentBook& book) {
     hash = fnv1aString(hash, book.path);
-    hash = fnv1aString(hash, book.title);
-    hash = fnv1aString(hash, book.author);
     hash = fnv1aString(hash, book.coverBmpPath);
     hash = hashCarouselThumbState(hash, book);
-    hash = fnv1aByte(hash, getCarouselBookProgressPercent(book));
-  }
+  };
+  if (bookCount >= 3) hashSideCover(books[(centerIdx + bookCount - 1) % bookCount]);
+  if (bookCount >= 2) hashSideCover(books[(centerIdx + 1) % bookCount]);
 
   return hash;
 }
@@ -388,6 +403,52 @@ std::string getCarouselFrameCachePathFromHash(const uint32_t hash) {
   char filename[96];
   std::snprintf(filename, sizeof(filename), "%s/%08lx.bin", CAROUSEL_FRAME_CACHE_DIR, static_cast<unsigned long>(hash));
   return filename;
+}
+
+// Frames are keyed by content hash and were never deleted, so every reading
+// session left ~48 KB stale frames behind and the cache directory kept growing.
+// Keep only the frames for the current carousel.
+void pruneCarouselFrameCache(const std::vector<RecentBook>& books, const int screenWidth, const int screenHeight,
+                             const size_t bufferSize, const bool darkMode) {
+  constexpr size_t MAX_KEEP = 16;
+  constexpr size_t MAX_REMOVALS = 64;
+  if (books.empty() || books.size() > MAX_KEEP) return;
+
+  char keep[MAX_KEEP][16];
+  const size_t keepCount = books.size();
+  for (size_t i = 0; i < keepCount; ++i) {
+    const uint32_t hash =
+        getCarouselFrameHash(books, static_cast<int>(i), screenWidth, screenHeight, bufferSize, darkMode);
+    std::snprintf(keep[i], sizeof(keep[i]), "%08lx.bin", static_cast<unsigned long>(hash));
+  }
+
+  auto dir = Storage.open(CAROUSEL_FRAME_CACHE_DIR);
+  if (!dir || !dir.isDirectory()) {
+    if (dir) dir.close();
+    return;
+  }
+
+  std::vector<std::string> stale;
+  char name[64];
+  for (auto entry = dir.openNextFile(); entry && stale.size() < MAX_REMOVALS; entry = dir.openNextFile()) {
+    const bool isDir = entry.isDirectory();
+    const size_t len = entry.getName(name, sizeof(name));
+    entry.close();
+    if (isDir || len == 0) continue;
+    bool wanted = false;
+    for (size_t i = 0; i < keepCount && !wanted; ++i) {
+      wanted = std::strcmp(name, keep[i]) == 0;
+    }
+    if (!wanted) stale.emplace_back(std::string(CAROUSEL_FRAME_CACHE_DIR) + "/" + name);
+  }
+  dir.close();
+
+  for (const std::string& path : stale) {
+    Storage.remove(path.c_str());
+  }
+  if (!stale.empty()) {
+    LOG_INF("HCR", "Pruned %u stale carousel frames", static_cast<unsigned>(stale.size()));
+  }
 }
 
 int getHomeShortcutPageSize() {
@@ -1078,6 +1139,8 @@ void HomeActivity::preRenderCarouselFrames() {
   }
 
   freeCoverBuffer();
+  pruneCarouselFrameCache(recentBooks, renderer.getScreenWidth(), renderer.getScreenHeight(), renderer.getBufferSize(),
+                          renderer.isDarkMode());
   const int bookCount = static_cast<int>(recentBooks.size());
   const int centerIdx = wrapBookIndex(lastCarouselBookIndex, bookCount);
   // Load the center frame from the SD cache directly into the frame buffer, or
