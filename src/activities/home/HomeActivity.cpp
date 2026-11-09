@@ -654,6 +654,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
       removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
 
       if (FsHelpers::hasEpubExtension(book.path)) {
+        CoverDiag::ScopedCapture captureCoverLogs;
         Epub epub(book.path, "/.crosspoint");
         const bool epubLoaded = epub.load(isLyraCarouselTheme(), true);
         CoverDiag::log("EPUB load=%d cache='%s'", epubLoaded ? 1 : 0, epub.getCachePath().c_str());

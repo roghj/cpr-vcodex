@@ -72,6 +72,11 @@ void clearLastLogs();
 // logMessages is untrusted garbage. Callers should call clearLastLogs() when
 // this returns true so getLastLogs() does not dump corrupt data into crash reports.
 bool sanitizeLogHead();
+// Optional observer for every formatted log line (diagnostics only). The tap
+// runs inside logPrintf, possibly while a storage lock is held, so it must not
+// do I/O itself; buffer the line and flush later.
+using LogTapFn = void (*)(const char* line);
+void setLogTap(LogTapFn tap);
 
 class MySerialImpl : public Print {
  public:

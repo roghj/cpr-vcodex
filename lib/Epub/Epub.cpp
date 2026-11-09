@@ -971,6 +971,13 @@ bool Epub::generateThumbBmpForCover(int width, int height, const std::string& th
   if (FsHelpers::hasJpgExtension(coverImageHref)) {
     LOG_DBG("EBP", "Generating thumb BMP from JPG cover image");
     const auto coverJpgTempPath = getCachePath() + "/.cover.jpg";
+    {
+      size_t itemSize = 0;
+      const bool sized = getItemSize(coverImageHref, &itemSize);
+      const auto heap = MemoryBudget::snapshot();
+      CoverDiag::log("Cover item '%s' found=%d bytes=%u heap free=%u maxAlloc=%u", coverImageHref.c_str(),
+                     sized ? 1 : 0, static_cast<unsigned>(itemSize), heap.freeHeap, heap.maxAllocHeap);
+    }
     if (!extractItemToFile(coverImageHref, coverJpgTempPath)) {
       CoverDiag::log("Cover extract failed: '%s' -> '%s'", coverImageHref.c_str(), coverJpgTempPath.c_str());
       return false;
