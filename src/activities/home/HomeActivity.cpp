@@ -1,6 +1,7 @@
 #include "HomeActivity.h"
 
 #include <Bitmap.h>
+#include <CoverDiag.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -12,7 +13,6 @@
 #include <LibraryIndexFile.h>
 #include <Logging.h>
 #include <Memory.h>
-#include <CoverDiag.h>
 #include <MemoryBudget.h>
 #include <Txt.h>
 #include <Utf8.h>

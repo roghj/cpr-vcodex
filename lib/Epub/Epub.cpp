@@ -1,12 +1,12 @@
 #include "Epub.h"
 
+#include <CoverDiag.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <JpegToBmpConverter.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <MemoryBudget.h>
-#include "CoverDiag.h"
 #include <PngToBmpConverter.h>
 #include <Txt.h>
 #include <Utf8.h>
