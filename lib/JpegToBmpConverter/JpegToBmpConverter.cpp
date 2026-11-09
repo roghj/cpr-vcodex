@@ -1,5 +1,6 @@
 #include "JpegToBmpConverter.h"
 
+#include <BuildScratch.h>
 #include <HalDisplay.h>
 #include <HalStorage.h>
 #include <JPEGDEC.h>
@@ -339,6 +340,8 @@ struct BmpConvertCtx {
   // Accumulates one MCU row (up to MAX_MCU_HEIGHT source rows × srcWidth pixels)
   // Filled column-by-column as JPEGDEC callbacks arrive for the same MCU row
   std::unique_ptr<uint8_t[]> mcuBuf;
+  // Points at mcuBuf, or at lent framebuffer scratch when the heap has no run large enough.
+  uint8_t* mcu;
 
   // Y-axis area averaging accumulators (needsScaling only)
   int currentOutY;
@@ -565,7 +568,7 @@ int bmpDrawCallback(JPEGDRAW* pDraw) {
   for (int r = 0; r < blockH && r < MAX_MCU_HEIGHT; r++) {
     const int copyW = (blockX + validW <= ctx->srcWidth) ? validW : (ctx->srcWidth - blockX);
     if (copyW <= 0) continue;
-    memcpy(ctx->mcuBuf.get() + r * ctx->srcWidth + blockX, pixels + r * stride, copyW);
+    memcpy(ctx->mcu + r * ctx->srcWidth + blockX, pixels + r * stride, copyW);
   }
 
   // Wait for the last MCU column before processing any rows
@@ -575,7 +578,7 @@ int bmpDrawCallback(JPEGDRAW* pDraw) {
   const int endRow = blockY + blockH;
 
   for (int y = blockY; y < endRow && y < ctx->srcHeight; y++) {
-    const uint8_t* srcRow = ctx->mcuBuf.get() + (y - blockY) * ctx->srcWidth;
+    const uint8_t* srcRow = ctx->mcu + (y - blockY) * ctx->srcWidth;
 
     if (ctx->smoothUpscale) {
       processSmoothSourceRow(ctx, srcRow, y);
@@ -757,13 +760,27 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(HalFile& jpegFile, Print& b
   ctx.error = false;
 
   // MCU row buffer: MAX_MCU_HEIGHT rows × decoded srcWidth columns of grayscale
-  ctx.mcuBuf = makeUniqueNoThrow<uint8_t[]>(MAX_MCU_HEIGHT * ctx.srcWidth);
-  if (!ctx.mcuBuf) {
+  // Wide covers need up to ~19 KB here right after the ~20 KB decoder, which a
+  // fragmented heap often cannot supply contiguously. Fall back to the lent
+  // framebuffer scratch (GfxRenderer::FrameBufferLoan) when one is available.
+  const size_t mcuBytes = static_cast<size_t>(MAX_MCU_HEIGHT) * ctx.srcWidth;
+  uint8_t* scratchMcu = nullptr;
+  ctx.mcuBuf = makeUniqueNoThrow<uint8_t[]>(mcuBytes);
+  if (ctx.mcuBuf) {
+    ctx.mcu = ctx.mcuBuf.get();
+  } else {
+    scratchMcu = buildscratch::claim(mcuBytes);
+    ctx.mcu = scratchMcu;
+  }
+  const ScopedCleanup releaseScratchMcu{[&scratchMcu]() {
+    if (scratchMcu) buildscratch::release(scratchMcu);
+  }};
+  if (!ctx.mcu) {
     LOG_ERR("JPG", "OOM: MCU buffer (%d bytes)", MAX_MCU_HEIGHT * ctx.srcWidth);
     setPermanent(false);  // transient: OOM
     return false;
   }
-  memset(ctx.mcuBuf.get(), 0, MAX_MCU_HEIGHT * ctx.srcWidth);
+  memset(ctx.mcu, 0, mcuBytes);
 
   ctx.bmpRow = makeUniqueNoThrow<uint8_t[]>(bytesPerRow);
   if (!ctx.bmpRow) {

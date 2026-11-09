@@ -21,6 +21,10 @@ class HomeActivity final : public Activity {
   bool recentsLoading = false;
   bool recentsLoaded = false;
   bool firstRenderDone = false;
+  // Lyra Carousel: neighbour frames are pre-rendered to the SD cache while Home
+  // sits idle, so the first move to a side book loads instead of re-rendering.
+  unsigned long lastHomeActivityMs = 0;
+  bool carouselPrewarmDone = false;
   bool hasOpdsServers = false;
   bool hasPlugins = false;
   // The home "library" slot (index 2) shows Plugins when any plugin is
@@ -67,6 +71,7 @@ class HomeActivity final : public Activity {
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer
   void preRenderCarouselFrames();
+  bool maybePrewarmCarouselNeighbor();
   bool renderCarouselFrame(int bookIndex);
   bool loadCarouselFrameFromStorage(int bookIndex);
   bool saveCarouselFrameToStorage(int bookIndex);

@@ -41,18 +41,21 @@ bool InflateStream::init(const bool streaming) {
     // Raw malloc (not makeUniqueNoThrow): the header keeps tinfl_decompressor
     // an incomplete type so consumers never include miniz; both blocks are
     // freed in deinit()/the destructor.
-    state = static_cast<tinfl_decompressor*>(malloc(sizeof(tinfl_decompressor)));
-    if (!state) {
-      logAllocationFailure("state", sizeof(tinfl_decompressor));
-      return false;
-    }
+    // Take the 32KB window first: it needs the heap's largest free run, and
+    // allocating the smaller state before it can split that run on a
+    // fragmented heap, making the window allocation fail.
     if (streaming) {
       window = static_cast<uint8_t*>(malloc(WINDOW_SIZE));
       if (!window) {
         logAllocationFailure("window", WINDOW_SIZE);
-        deinit();
         return false;
       }
+    }
+    state = static_cast<tinfl_decompressor*>(malloc(sizeof(tinfl_decompressor)));
+    if (!state) {
+      logAllocationFailure("state", sizeof(tinfl_decompressor));
+      deinit();
+      return false;
     }
   }
 

@@ -5,6 +5,7 @@
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
+#include <HalGPIO.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -96,6 +97,26 @@ void updateHomeBookMetadata(const RecentBook& book) {
 
   RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath, book.bookId);
 }
+
+// Cover extraction inflates with a 32 KB window, but on Home the largest free
+// heap run is often just under that, so every deflated cover failed to extract.
+// Lend the framebuffer (as chapter builds do) so InflateStream takes the window
+// from its 48 KB instead. The lent bytes are scratch afterwards, so the screen
+// buffer is cleared and the caller redraws. Hold the RenderLock while it exists.
+class CoverExtractionLoan {
+ public:
+  explicit CoverExtractionLoan(GfxRenderer& renderer) : renderer_(renderer), loan_(renderer) {}
+  ~CoverExtractionLoan() {
+    loan_.end();
+    renderer_.clearScreen();
+  }
+  CoverExtractionLoan(const CoverExtractionLoan&) = delete;
+  CoverExtractionLoan& operator=(const CoverExtractionLoan&) = delete;
+
+ private:
+  GfxRenderer& renderer_;
+  GfxRenderer::FrameBufferLoan loan_;
+};
 
 bool canLoadHomeCover(const std::string& path) {
   return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) || FsHelpers::hasTxtExtension(path) ||
@@ -340,24 +361,39 @@ uint8_t getCarouselBookProgressPercent(const RecentBook& recentBook) {
 uint32_t getCarouselFrameHash(const std::vector<RecentBook>& books, const int centerIdx, const int screenWidth,
                               const int screenHeight, const size_t bufferSize, const bool darkMode) {
   uint32_t hash = FNV1A_OFFSET;
-  hash = fnv1aString(hash, "lyra-carousel-frame-v7-progress-badge");
+  hash = fnv1aString(hash, "lyra-carousel-frame-v8-visible-books");
   hash = fnv1aU32(hash, static_cast<uint32_t>(screenWidth));
   hash = fnv1aU32(hash, static_cast<uint32_t>(screenHeight));
   hash = fnv1aU32(hash, static_cast<uint32_t>(bufferSize));
   hash = fnv1aU32(hash, darkMode ? 1U : 0U);
   hash = fnv1aU32(hash, static_cast<uint32_t>(SETTINGS.homeBookSource));
-  hash = fnv1aU32(hash, static_cast<uint32_t>(books.size()));
+  const int bookCount = static_cast<int>(books.size());
+  hash = fnv1aU32(hash, static_cast<uint32_t>(bookCount));
   hash = fnv1aU32(hash, static_cast<uint32_t>(centerIdx));
+  if (bookCount <= 0 || centerIdx < 0 || centerIdx >= bookCount) {
+    return hash;
+  }
 
-  for (const RecentBook& book : books) {
-    hash = fnv1aString(hash, book.bookId);
+  // Key the frame only on what it draws: the center book (cover, progress
+  // badge, author, title) and the side covers. Hashing every recent book's
+  // progress made reading one book invalidate every cached frame, so each
+  // neighbour was re-rendered on its first visit after returning Home.
+  const RecentBook& center = books[centerIdx];
+  hash = fnv1aString(hash, center.bookId);
+  hash = fnv1aString(hash, center.path);
+  hash = fnv1aString(hash, center.title);
+  hash = fnv1aString(hash, center.author);
+  hash = fnv1aString(hash, center.coverBmpPath);
+  hash = hashCarouselThumbState(hash, center);
+  hash = fnv1aByte(hash, getCarouselBookProgressPercent(center));
+
+  const auto hashSideCover = [&hash](const RecentBook& book) {
     hash = fnv1aString(hash, book.path);
-    hash = fnv1aString(hash, book.title);
-    hash = fnv1aString(hash, book.author);
     hash = fnv1aString(hash, book.coverBmpPath);
     hash = hashCarouselThumbState(hash, book);
-    hash = fnv1aByte(hash, getCarouselBookProgressPercent(book));
-  }
+  };
+  if (bookCount >= 3) hashSideCover(books[(centerIdx + bookCount - 1) % bookCount]);
+  if (bookCount >= 2) hashSideCover(books[(centerIdx + 1) % bookCount]);
 
   return hash;
 }
@@ -366,6 +402,92 @@ std::string getCarouselFrameCachePathFromHash(const uint32_t hash) {
   char filename[96];
   std::snprintf(filename, sizeof(filename), "%s/%08lx.bin", CAROUSEL_FRAME_CACHE_DIR, static_cast<unsigned long>(hash));
   return filename;
+}
+
+// Frames are keyed by content hash and were never deleted, so every reading
+// session left ~48 KB stale frames behind and the cache directory kept growing.
+// Keep only the frames for the current carousel.
+void pruneCarouselFrameCache(const std::vector<RecentBook>& books, const int screenWidth, const int screenHeight,
+                             const size_t bufferSize, const bool darkMode) {
+  constexpr size_t MAX_KEEP = 16;
+  constexpr size_t MAX_REMOVALS = 64;
+  if (books.empty() || books.size() > MAX_KEEP) return;
+
+  char keep[MAX_KEEP][16];
+  const size_t keepCount = books.size();
+  for (size_t i = 0; i < keepCount; ++i) {
+    const uint32_t hash =
+        getCarouselFrameHash(books, static_cast<int>(i), screenWidth, screenHeight, bufferSize, darkMode);
+    std::snprintf(keep[i], sizeof(keep[i]), "%08lx.bin", static_cast<unsigned long>(hash));
+  }
+
+  auto dir = Storage.open(CAROUSEL_FRAME_CACHE_DIR);
+  if (!dir || !dir.isDirectory()) {
+    if (dir) dir.close();
+    return;
+  }
+
+  std::vector<std::string> stale;
+  char name[64];
+  for (auto entry = dir.openNextFile(); entry && stale.size() < MAX_REMOVALS; entry = dir.openNextFile()) {
+    const bool isDir = entry.isDirectory();
+    const size_t len = entry.getName(name, sizeof(name));
+    entry.close();
+    if (isDir || len == 0) continue;
+    bool wanted = false;
+    for (size_t i = 0; i < keepCount && !wanted; ++i) {
+      wanted = std::strcmp(name, keep[i]) == 0;
+    }
+    if (!wanted) stale.emplace_back(std::string(CAROUSEL_FRAME_CACHE_DIR) + "/" + name);
+  }
+  dir.close();
+
+  for (const std::string& path : stale) {
+    Storage.remove(path.c_str());
+  }
+  if (!stale.empty()) {
+    LOG_INF("HCR", "Pruned %u stale carousel frames", static_cast<unsigned>(stale.size()));
+  }
+}
+
+constexpr const char* CAROUSEL_SCREEN_SNAPSHOT_PATH = "/.crosspoint/home-carousel-screen.tmp";
+constexpr unsigned long CAROUSEL_PREWARM_IDLE_MS = 500;
+
+// Pre-rendering a neighbour frame draws into the framebuffer, which holds the
+// Home screen currently on the panel. Park those bytes on SD and put them back
+// afterwards so nothing visible or cached changes.
+bool saveScreenSnapshot(const GfxRenderer& renderer) {
+  const uint8_t* frameBuffer = renderer.getFrameBuffer();
+  if (!frameBuffer) return false;
+  const size_t bufferSize = renderer.getBufferSize();
+  HalFile file;
+  if (!Storage.openFileForWrite("HCR", CAROUSEL_SCREEN_SNAPSHOT_PATH, file)) return false;
+  const size_t written = file.write(frameBuffer, bufferSize);
+  file.close();
+  if (written != bufferSize) {
+    Storage.remove(CAROUSEL_SCREEN_SNAPSHOT_PATH);
+    return false;
+  }
+  return true;
+}
+
+bool restoreScreenSnapshot(const GfxRenderer& renderer) {
+  uint8_t* frameBuffer = renderer.getFrameBuffer();
+  const size_t bufferSize = renderer.getBufferSize();
+  HalFile file;
+  bool ok = frameBuffer && Storage.openFileForRead("HCR", CAROUSEL_SCREEN_SNAPSHOT_PATH, file);
+  size_t totalRead = 0;
+  if (ok) {
+    while (totalRead < bufferSize) {
+      const int bytesRead = file.read(frameBuffer + totalRead, bufferSize - totalRead);
+      if (bytesRead <= 0) break;
+      totalRead += static_cast<size_t>(bytesRead);
+    }
+    file.close();
+    ok = totalRead == bufferSize;
+  }
+  Storage.remove(CAROUSEL_SCREEN_SNAPSHOT_PATH);
+  return ok;
 }
 
 int getHomeShortcutPageSize() {
@@ -564,7 +686,15 @@ void HomeActivity::loadGridCover(RecentBook& book, int height, bool& showingLoad
       popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
       GUI.fillPopupProgress(renderer, popupRect, 0);
     }
-    if (epub->generateThumbBmpFromSource(height)) {
+    bool gridOk = false;
+    {
+      RenderLock lock(*this);
+      const CoverExtractionLoan loan(renderer);
+      gridOk = epub->generateThumbBmpFromSource(height);
+    }
+    // The lent framebuffer bytes are scratch now; redraw the popup on the next progress update.
+    showingLoading = false;
+    if (gridOk) {
       return;
     }
   } else if (FsHelpers::hasXtcExtension(book.path)) {
@@ -650,11 +780,21 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             book.author = epub.getAuthor();
           }
           book.coverBmpPath = epub.getThumbBmpPath();
+          bool generated = false;
+          {
+            RenderLock lock(*this);
+            {
+              const CoverExtractionLoan loan(renderer);
+              generated = isLyraCarouselTheme() ? epub.generateThumbBmp(LyraCarouselTheme::kCenterCoverW,
+                                                                        LyraCarouselTheme::kCenterCoverH)
+                                                : epub.generateThumbBmp(coverHeight);
+            }
+          }
+          // The lent framebuffer bytes are scratch now; redraw the popup on the next progress update.
+          showingLoading = false;
           const bool success =
-              isLyraCarouselTheme()
-                  ? epub.generateThumbBmp(LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH) &&
-                        isValidBmpFile(getCarouselCenterThumbPath(book))
-                  : epub.generateThumbBmp(coverHeight) && isValidHomeCoverPath(book.coverBmpPath, coverHeight);
+              generated && (isLyraCarouselTheme() ? isValidBmpFile(getCarouselCenterThumbPath(book))
+                                                  : isValidHomeCoverPath(book.coverBmpPath, coverHeight));
           if (!success && !isLyraCarouselTheme()) {
             removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
             book.coverBmpPath = "";
@@ -752,6 +892,8 @@ void HomeActivity::onEnter() {
   invalidateCarouselFrameHash();
   carouselFramesReady = false;
   carouselCoverLoadAttemptPath.clear();
+  lastHomeActivityMs = millis();
+  carouselPrewarmDone = false;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   if (UITheme::getInstance().hasCoverGridHome()) {
@@ -1020,6 +1162,8 @@ void HomeActivity::preRenderCarouselFrames() {
   }
 
   freeCoverBuffer();
+  pruneCarouselFrameCache(recentBooks, renderer.getScreenWidth(), renderer.getScreenHeight(), renderer.getBufferSize(),
+                          renderer.isDarkMode());
   const int bookCount = static_cast<int>(recentBooks.size());
   const int centerIdx = wrapBookIndex(lastCarouselBookIndex, bookCount);
   // Load the center frame from the SD cache directly into the frame buffer, or
@@ -1030,9 +1174,72 @@ void HomeActivity::preRenderCarouselFrames() {
   carouselFramesReady = true;
 }
 
+bool HomeActivity::maybePrewarmCarouselNeighbor() {
+  if (carouselPrewarmDone || !isLyraCarouselTheme() || !firstRenderDone || !recentsLoaded || recentsLoading ||
+      !carouselFramesReady || recentBooks.size() < 2) {
+    return false;
+  }
+  if (millis() - lastHomeActivityMs < CAROUSEL_PREWARM_IDLE_MS || gpio.rawInputActive()) {
+    return false;
+  }
+
+  const int bookCount = static_cast<int>(recentBooks.size());
+  const int centerIdx = wrapBookIndex(lastCarouselBookIndex, bookCount);
+  const int candidates[2] = {(centerIdx + 1) % bookCount, (centerIdx + bookCount - 1) % bookCount};
+  for (const int idx : candidates) {
+    if (idx == centerIdx) continue;
+    const uint32_t hash = getCarouselFrameHash(recentBooks, idx, renderer.getScreenWidth(), renderer.getScreenHeight(),
+                                               renderer.getBufferSize(), renderer.isDarkMode());
+    if (Storage.exists(getCarouselFrameCachePathFromHash(hash).c_str())) continue;
+
+    // Never make a pending render wait: skip this round if the render task is busy.
+    RenderLock lock(RenderLock::Mode::Try);
+    if (!lock.ownsLock()) return false;
+
+    const int savedFrameIndex = residentCarouselFrameIndex;
+    const int savedSelectorIndex = residentCarouselSelectorIndex;
+    const uint32_t savedFrameHash = residentCarouselFrameHash;
+    const bool savedFrameValid = residentCarouselFrameValid;
+    if (!saveScreenSnapshot(renderer)) {
+      carouselPrewarmDone = true;  // SD unavailable; keep the old on-demand behaviour
+      return false;
+    }
+
+    renderCarouselFrame(idx);
+    LyraCarouselTheme::setPreRenderIndex(centerIdx);
+    invalidateCarouselFrameHash();
+
+    if (restoreScreenSnapshot(renderer)) {
+      residentCarouselFrameIndex = savedFrameIndex;
+      residentCarouselSelectorIndex = savedSelectorIndex;
+      residentCarouselFrameHash = savedFrameHash;
+      residentCarouselFrameValid = savedFrameValid;
+    } else {
+      // Could not put the screen bytes back: redraw Home from its cached frame.
+      LOG_ERR("HCR", "Screen snapshot restore failed; redrawing Home");
+      invalidateResidentCarouselFrame();
+      lock.unlock();
+      requestUpdate();
+    }
+    // One frame per idle loop pass: input is polled between frames, so the
+    // next neighbour starts on the following pass if nothing was pressed.
+    lastHomeActivityMs = millis() - CAROUSEL_PREWARM_IDLE_MS;
+    return true;
+  }
+
+  carouselPrewarmDone = true;
+  return false;
+}
+
 void HomeActivity::loop() {
   if (firstRenderDone && !recentsLoaded && !recentsLoading) {
     loadRecentCovers(UITheme::getInstance().getMetrics().homeCoverHeight);
+    return;
+  }
+
+  if (gpio.wasAnyPressed() || gpio.wasAnyReleased()) {
+    lastHomeActivityMs = millis();
+  } else if (maybePrewarmCarouselNeighbor()) {
     return;
   }
 
@@ -1567,6 +1774,9 @@ void HomeActivity::render(RenderLock&&) {
     lastCarouselBookIndex = selectorIndex;
     scheduleCarouselCoverLoadIfNeeded();
   }
+  // A new center has new neighbours to warm; wait for Home to go idle again.
+  lastHomeActivityMs = millis();
+  carouselPrewarmDone = false;
 
   bool usedCarouselFrame = false;
   if (carouselTheme && !recentBooks.empty()) {
