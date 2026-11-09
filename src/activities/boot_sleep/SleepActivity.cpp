@@ -1599,7 +1599,18 @@ bool SleepActivity::resolveLastBookCoverPath(std::string& coverBmpPath) const {
       return false;
     }
 
-    if (!lastEpub.generateCoverBmp(cropped)) {
+    bool generated = Storage.exists(lastEpub.getCoverBmpPath(cropped).c_str());
+    if (!generated) {
+      // Cover extraction needs a 32 KB inflate window, often larger than the
+      // largest free heap run; lend the framebuffer (as chapter builds do).
+      // The lent bytes are scratch afterwards, so clear before drawing.
+      {
+        GfxRenderer::FrameBufferLoan loan(renderer);
+        generated = lastEpub.generateCoverBmp(cropped);
+      }
+      renderer.clearScreen();
+    }
+    if (!generated) {
       LOG_ERR("SLP", "Failed to generate cover bmp");
       return false;
     }

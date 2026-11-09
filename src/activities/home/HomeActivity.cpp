@@ -99,6 +99,26 @@ void updateHomeBookMetadata(const RecentBook& book) {
   RECENT_BOOKS.updateBook(book.path, book.title, book.author, book.coverBmpPath, book.bookId);
 }
 
+// Cover extraction inflates with a 32 KB window, but on Home the largest free
+// heap run is often just under that, so every deflated cover failed to extract.
+// Lend the framebuffer (as chapter builds do) so InflateStream takes the window
+// from its 48 KB instead. The lent bytes are scratch afterwards, so the screen
+// buffer is cleared and the caller redraws. Hold the RenderLock while it exists.
+class CoverExtractionLoan {
+ public:
+  explicit CoverExtractionLoan(GfxRenderer& renderer) : renderer_(renderer), loan_(renderer) {}
+  ~CoverExtractionLoan() {
+    loan_.end();
+    renderer_.clearScreen();
+  }
+  CoverExtractionLoan(const CoverExtractionLoan&) = delete;
+  CoverExtractionLoan& operator=(const CoverExtractionLoan&) = delete;
+
+ private:
+  GfxRenderer& renderer_;
+  GfxRenderer::FrameBufferLoan loan_;
+};
+
 bool canLoadHomeCover(const std::string& path) {
   return FsHelpers::hasEpubExtension(path) || FsHelpers::hasXtcExtension(path) || FsHelpers::hasTxtExtension(path) ||
          FsHelpers::hasMarkdownExtension(path);
@@ -566,7 +586,14 @@ void HomeActivity::loadGridCover(RecentBook& book, int height, bool& showingLoad
       popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
       GUI.fillPopupProgress(renderer, popupRect, 0);
     }
-    const bool gridOk = epub->generateThumbBmpFromSource(height);
+    bool gridOk = false;
+    {
+      RenderLock lock(*this);
+      const CoverExtractionLoan loan(renderer);
+      gridOk = epub->generateThumbBmpFromSource(height);
+    }
+    // The lent framebuffer bytes are scratch now; redraw the popup on the next progress update.
+    showingLoading = false;
     CoverDiag::log("Grid thumb '%s' h=%d success=%d", book.path.c_str(), height, gridOk ? 1 : 0);
     if (gridOk) {
       return;
@@ -666,11 +693,21 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             book.author = epub.getAuthor();
           }
           book.coverBmpPath = epub.getThumbBmpPath();
+          bool generated = false;
+          {
+            RenderLock lock(*this);
+            {
+              const CoverExtractionLoan loan(renderer);
+              generated = isLyraCarouselTheme() ? epub.generateThumbBmp(LyraCarouselTheme::kCenterCoverW,
+                                                                        LyraCarouselTheme::kCenterCoverH)
+                                                : epub.generateThumbBmp(coverHeight);
+            }
+          }
+          // The lent framebuffer bytes are scratch now; redraw the popup on the next progress update.
+          showingLoading = false;
           const bool success =
-              isLyraCarouselTheme()
-                  ? epub.generateThumbBmp(LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH) &&
-                        isValidBmpFile(getCarouselCenterThumbPath(book))
-                  : epub.generateThumbBmp(coverHeight) && isValidHomeCoverPath(book.coverBmpPath, coverHeight);
+              generated && (isLyraCarouselTheme() ? isValidBmpFile(getCarouselCenterThumbPath(book))
+                                                  : isValidHomeCoverPath(book.coverBmpPath, coverHeight));
           {
             const auto heap = MemoryBudget::snapshot();
             CoverDiag::log("EPUB thumb success=%d heap free=%u maxAlloc=%u", success ? 1 : 0, heap.freeHeap,
