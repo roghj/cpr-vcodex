@@ -6,6 +6,7 @@
 #include <Logging.h>
 #include <Memory.h>
 #include <MemoryBudget.h>
+#include "CoverDiag.h"
 #include <PngToBmpConverter.h>
 #include <Txt.h>
 #include <Utf8.h>
@@ -919,8 +920,8 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
     return false;
   }
 
-  LOG_INF("CVR", "Thumb %dx%d -> '%s' cover='%s'", width, height, thumbPath.c_str(),
-          bookMetadataCache->coreMetadata.coverItemHref.c_str());
+  CoverDiag::log("Thumb %dx%d -> '%s' cover='%s'", width, height, thumbPath.c_str(),
+                 bookMetadataCache->coreMetadata.coverItemHref.c_str());
   return generateThumbBmpForCover(width, height, thumbPath, bookMetadataCache->coreMetadata.coverItemHref);
 }
 
@@ -944,10 +945,10 @@ bool Epub::generateThumbBmpFromSource(int height) {
     return false;
   }
   if (!parseContentOpf(*metadata, /*writeSpineEntries=*/false, /*metadataOnly=*/false, zip.get())) {
-    LOG_INF("CVR", "Cover metadata parse failed: '%s'", filepath.c_str());
+    CoverDiag::log("Cover metadata parse failed: '%s'", filepath.c_str());
     return false;
   }
-  LOG_INF("CVR", "Cover from source: '%s' cover='%s'", filepath.c_str(), metadata->coverItemHref.c_str());
+  CoverDiag::log("Cover from source: '%s' cover='%s'", filepath.c_str(), metadata->coverItemHref.c_str());
   zip.reset();
   // The cover of a protected book is encrypted like everything else.
   if (!decryptor && !openProtection()) return false;
@@ -959,7 +960,7 @@ bool Epub::generateThumbBmpFromSource(int height) {
 bool Epub::generateThumbBmpForCover(int width, int height, const std::string& thumbPath,
                                     const std::string& coverImageHref) const {
   if (coverImageHref.empty()) {
-    LOG_INF("CVR", "No known cover image for thumbnail");
+    CoverDiag::log("No known cover image for thumbnail");
     return false;
   }
 
@@ -971,7 +972,7 @@ bool Epub::generateThumbBmpForCover(int width, int height, const std::string& th
     LOG_DBG("EBP", "Generating thumb BMP from JPG cover image");
     const auto coverJpgTempPath = getCachePath() + "/.cover.jpg";
     if (!extractItemToFile(coverImageHref, coverJpgTempPath)) {
-      LOG_INF("CVR", "Cover extract failed: '%s' -> '%s'", coverImageHref.c_str(), coverJpgTempPath.c_str());
+      CoverDiag::log("Cover extract failed: '%s' -> '%s'", coverImageHref.c_str(), coverJpgTempPath.c_str());
       return false;
     }
 
@@ -982,7 +983,7 @@ bool Epub::generateThumbBmpForCover(int width, int height, const std::string& th
 
     HalFile thumbBmp;
     if (!Storage.openFileForWrite("EBP", thumbPath, thumbBmp)) {
-      LOG_INF("CVR", "Cannot open thumb for write: '%s'", thumbPath.c_str());
+      CoverDiag::log("Cannot open thumb for write: '%s'", thumbPath.c_str());
       return false;
     }
     // Use smaller target size for Continue Reading card (half of screen: 240x400)
@@ -990,6 +991,11 @@ bool Epub::generateThumbBmpForCover(int width, int height, const std::string& th
     int THUMB_TARGET_WIDTH = width;
     int THUMB_TARGET_HEIGHT = height;
     bool permanentJpegFailure = false;
+    {
+      const auto heap = MemoryBudget::snapshot();
+      CoverDiag::log("JPG thumb decode start %dx%d heap free=%u maxAlloc=%u (needs free>=53248 maxAlloc>=20480)", width,
+                     height, heap.freeHeap, heap.maxAllocHeap);
+    }
     const bool success = JpegToBmpConverter::jpegFileTo1BitBmpStreamWithSize(
         coverJpg, thumbBmp, THUMB_TARGET_WIDTH, THUMB_TARGET_HEIGHT, &permanentJpegFailure);
     // Explicitly close() files before calling Storage.remove()
@@ -997,8 +1003,8 @@ bool Epub::generateThumbBmpForCover(int width, int height, const std::string& th
     thumbBmp.close();
     {
       const auto heap = MemoryBudget::snapshot();
-      LOG_INF("CVR", "JPG thumb decode success=%d permanent=%d heap free=%u maxAlloc=%u", success ? 1 : 0,
-              permanentJpegFailure ? 1 : 0, heap.freeHeap, heap.maxAllocHeap);
+      CoverDiag::log("JPG thumb decode success=%d permanent=%d heap free=%u maxAlloc=%u", success ? 1 : 0,
+                     permanentJpegFailure ? 1 : 0, heap.freeHeap, heap.maxAllocHeap);
     }
 
     if (!success) {
