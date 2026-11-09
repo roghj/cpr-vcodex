@@ -453,7 +453,7 @@ void pruneCarouselFrameCache(const std::vector<RecentBook>& books, const int scr
 }
 
 constexpr const char* CAROUSEL_SCREEN_SNAPSHOT_PATH = "/.crosspoint/home-carousel-screen.tmp";
-constexpr unsigned long CAROUSEL_PREWARM_IDLE_MS = 1500;
+constexpr unsigned long CAROUSEL_PREWARM_IDLE_MS = 500;
 
 // Pre-rendering a neighbour frame draws into the framebuffer, which holds the
 // Home screen currently on the panel. Park those bytes on SD and put them back
@@ -1220,17 +1220,22 @@ bool HomeActivity::maybePrewarmCarouselNeighbor() {
     const int savedSelectorIndex = residentCarouselSelectorIndex;
     const uint32_t savedFrameHash = residentCarouselFrameHash;
     const bool savedFrameValid = residentCarouselFrameValid;
+    const unsigned long startMs = millis();
     if (!saveScreenSnapshot(renderer)) {
       carouselPrewarmDone = true;  // SD unavailable; keep the old on-demand behaviour
       return false;
     }
 
-    LOG_DBG("HCR", "Pre-rendering carousel frame %d", idx);
+    const unsigned long savedMs = millis();
     renderCarouselFrame(idx);
     LyraCarouselTheme::setPreRenderIndex(centerIdx);
     invalidateCarouselFrameHash();
+    const unsigned long renderedMs = millis();
 
-    if (restoreScreenSnapshot(renderer)) {
+    const bool restored = restoreScreenSnapshot(renderer);
+    CoverDiag::log("Prewarm frame %d: snapshot=%lums render+save=%lums restore=%lums", idx, savedMs - startMs,
+                   renderedMs - savedMs, millis() - renderedMs);
+    if (restored) {
       residentCarouselFrameIndex = savedFrameIndex;
       residentCarouselSelectorIndex = savedSelectorIndex;
       residentCarouselFrameHash = savedFrameHash;
@@ -1242,8 +1247,9 @@ bool HomeActivity::maybePrewarmCarouselNeighbor() {
       lock.unlock();
       requestUpdate();
     }
-    // One frame per idle loop pass keeps input latency bounded.
-    lastHomeActivityMs = millis() - CAROUSEL_PREWARM_IDLE_MS + 300;
+    // One frame per idle loop pass: input is polled between frames, so the
+    // next neighbour starts on the following pass if nothing was pressed.
+    lastHomeActivityMs = millis() - CAROUSEL_PREWARM_IDLE_MS;
     return true;
   }
 
