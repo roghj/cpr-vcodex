@@ -6,6 +6,7 @@
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
+#include <HalGPIO.h>
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -451,6 +452,46 @@ void pruneCarouselFrameCache(const std::vector<RecentBook>& books, const int scr
   }
 }
 
+constexpr const char* CAROUSEL_SCREEN_SNAPSHOT_PATH = "/.crosspoint/home-carousel-screen.tmp";
+constexpr unsigned long CAROUSEL_PREWARM_IDLE_MS = 1500;
+
+// Pre-rendering a neighbour frame draws into the framebuffer, which holds the
+// Home screen currently on the panel. Park those bytes on SD and put them back
+// afterwards so nothing visible or cached changes.
+bool saveScreenSnapshot(const GfxRenderer& renderer) {
+  const uint8_t* frameBuffer = renderer.getFrameBuffer();
+  if (!frameBuffer) return false;
+  const size_t bufferSize = renderer.getBufferSize();
+  HalFile file;
+  if (!Storage.openFileForWrite("HCR", CAROUSEL_SCREEN_SNAPSHOT_PATH, file)) return false;
+  const size_t written = file.write(frameBuffer, bufferSize);
+  file.close();
+  if (written != bufferSize) {
+    Storage.remove(CAROUSEL_SCREEN_SNAPSHOT_PATH);
+    return false;
+  }
+  return true;
+}
+
+bool restoreScreenSnapshot(const GfxRenderer& renderer) {
+  uint8_t* frameBuffer = renderer.getFrameBuffer();
+  const size_t bufferSize = renderer.getBufferSize();
+  HalFile file;
+  bool ok = frameBuffer && Storage.openFileForRead("HCR", CAROUSEL_SCREEN_SNAPSHOT_PATH, file);
+  size_t totalRead = 0;
+  if (ok) {
+    while (totalRead < bufferSize) {
+      const int bytesRead = file.read(frameBuffer + totalRead, bufferSize - totalRead);
+      if (bytesRead <= 0) break;
+      totalRead += static_cast<size_t>(bytesRead);
+    }
+    file.close();
+    ok = totalRead == bufferSize;
+  }
+  Storage.remove(CAROUSEL_SCREEN_SNAPSHOT_PATH);
+  return ok;
+}
+
 int getHomeShortcutPageSize() {
   return static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme) == CrossPointSettings::UI_THEME::LYRA
              ? LYRA_HOME_SHORTCUT_PAGE_SIZE
@@ -871,6 +912,8 @@ void HomeActivity::onEnter() {
   invalidateCarouselFrameHash();
   carouselFramesReady = false;
   carouselCoverLoadAttemptPath.clear();
+  lastHomeActivityMs = millis();
+  carouselPrewarmDone = false;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   if (UITheme::getInstance().hasCoverGridHome()) {
@@ -1151,9 +1194,72 @@ void HomeActivity::preRenderCarouselFrames() {
   carouselFramesReady = true;
 }
 
+bool HomeActivity::maybePrewarmCarouselNeighbor() {
+  if (carouselPrewarmDone || !isLyraCarouselTheme() || !firstRenderDone || !recentsLoaded || recentsLoading ||
+      !carouselFramesReady || recentBooks.size() < 2) {
+    return false;
+  }
+  if (millis() - lastHomeActivityMs < CAROUSEL_PREWARM_IDLE_MS || gpio.rawInputActive()) {
+    return false;
+  }
+
+  const int bookCount = static_cast<int>(recentBooks.size());
+  const int centerIdx = wrapBookIndex(lastCarouselBookIndex, bookCount);
+  const int candidates[2] = {(centerIdx + 1) % bookCount, (centerIdx + bookCount - 1) % bookCount};
+  for (const int idx : candidates) {
+    if (idx == centerIdx) continue;
+    const uint32_t hash = getCarouselFrameHash(recentBooks, idx, renderer.getScreenWidth(), renderer.getScreenHeight(),
+                                               renderer.getBufferSize(), renderer.isDarkMode());
+    if (Storage.exists(getCarouselFrameCachePathFromHash(hash).c_str())) continue;
+
+    // Never make a pending render wait: skip this round if the render task is busy.
+    RenderLock lock(RenderLock::Mode::Try);
+    if (!lock.ownsLock()) return false;
+
+    const int savedFrameIndex = residentCarouselFrameIndex;
+    const int savedSelectorIndex = residentCarouselSelectorIndex;
+    const uint32_t savedFrameHash = residentCarouselFrameHash;
+    const bool savedFrameValid = residentCarouselFrameValid;
+    if (!saveScreenSnapshot(renderer)) {
+      carouselPrewarmDone = true;  // SD unavailable; keep the old on-demand behaviour
+      return false;
+    }
+
+    LOG_DBG("HCR", "Pre-rendering carousel frame %d", idx);
+    renderCarouselFrame(idx);
+    LyraCarouselTheme::setPreRenderIndex(centerIdx);
+    invalidateCarouselFrameHash();
+
+    if (restoreScreenSnapshot(renderer)) {
+      residentCarouselFrameIndex = savedFrameIndex;
+      residentCarouselSelectorIndex = savedSelectorIndex;
+      residentCarouselFrameHash = savedFrameHash;
+      residentCarouselFrameValid = savedFrameValid;
+    } else {
+      // Could not put the screen bytes back: redraw Home from its cached frame.
+      LOG_ERR("HCR", "Screen snapshot restore failed; redrawing Home");
+      invalidateResidentCarouselFrame();
+      lock.unlock();
+      requestUpdate();
+    }
+    // One frame per idle loop pass keeps input latency bounded.
+    lastHomeActivityMs = millis() - CAROUSEL_PREWARM_IDLE_MS + 300;
+    return true;
+  }
+
+  carouselPrewarmDone = true;
+  return false;
+}
+
 void HomeActivity::loop() {
   if (firstRenderDone && !recentsLoaded && !recentsLoading) {
     loadRecentCovers(UITheme::getInstance().getMetrics().homeCoverHeight);
+    return;
+  }
+
+  if (gpio.wasAnyPressed() || gpio.wasAnyReleased()) {
+    lastHomeActivityMs = millis();
+  } else if (maybePrewarmCarouselNeighbor()) {
     return;
   }
 
@@ -1688,6 +1794,9 @@ void HomeActivity::render(RenderLock&&) {
     lastCarouselBookIndex = selectorIndex;
     scheduleCarouselCoverLoadIfNeeded();
   }
+  // A new center has new neighbours to warm; wait for Home to go idle again.
+  lastHomeActivityMs = millis();
+  carouselPrewarmDone = false;
 
   bool usedCarouselFrame = false;
   if (carouselTheme && !recentBooks.empty()) {
