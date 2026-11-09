@@ -12,6 +12,7 @@
 #include <LibraryIndexFile.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <MemoryBudget.h>
 #include <Txt.h>
 #include <Utf8.h>
 #include <Xtc.h>
@@ -564,7 +565,9 @@ void HomeActivity::loadGridCover(RecentBook& book, int height, bool& showingLoad
       popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
       GUI.fillPopupProgress(renderer, popupRect, 0);
     }
-    if (epub->generateThumbBmpFromSource(height)) {
+    const bool gridOk = epub->generateThumbBmpFromSource(height);
+    LOG_INF("CVR", "Grid thumb '%s' h=%d success=%d", book.path.c_str(), height, gridOk ? 1 : 0);
+    if (gridOk) {
       return;
     }
   } else if (FsHelpers::hasXtcExtension(book.path)) {
@@ -607,8 +610,16 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
     GUI.fillPopupProgress(renderer, popupRect, progress);
   };
 
+  {
+    const auto heap = MemoryBudget::snapshot();
+    LOG_INF("CVR", "Home cover load: books=%u carousel=%d grid=%d height=%d heap free=%u maxAlloc=%u",
+            static_cast<unsigned>(recentBooks.size()), isLyraCarouselTheme() ? 1 : 0, coverGridUi ? 1 : 0,
+            coverHeight, heap.freeHeap, heap.maxAllocHeap);
+  }
+
   int progress = 0;
   for (RecentBook& book : recentBooks) {
+    LOG_INF("CVR", "Book[%d] path='%s' coverBmpPath='%s'", progress, book.path.c_str(), book.coverBmpPath.c_str());
     if (isLyraCarouselTheme() && progress != lastCarouselBookIndex) {
       progress++;
       continue;
@@ -630,6 +641,7 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
     const bool missingThumb =
         book.coverBmpPath.empty() ||
         (isLyraCarouselTheme() ? !hasCarouselUsableThumb(book) : !isValidHomeCoverPath(book.coverBmpPath, coverHeight));
+    LOG_INF("CVR", "Book[%d] missingThumb=%d", progress, missingThumb ? 1 : 0);
     if (missingThumb) {
       if (isLyraCarouselTheme()) {
         carouselCoverLoadAttemptPath = book.path;
@@ -642,7 +654,9 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 
       if (FsHelpers::hasEpubExtension(book.path)) {
         Epub epub(book.path, "/.crosspoint");
-        if (epub.load(isLyraCarouselTheme(), true)) {
+        const bool epubLoaded = epub.load(isLyraCarouselTheme(), true);
+        LOG_INF("CVR", "EPUB load=%d cache='%s'", epubLoaded ? 1 : 0, epub.getCachePath().c_str());
+        if (epubLoaded) {
           if (!epub.getTitle().empty()) {
             book.title = epub.getTitle();
           }
@@ -655,6 +669,11 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
                   ? epub.generateThumbBmp(LyraCarouselTheme::kCenterCoverW, LyraCarouselTheme::kCenterCoverH) &&
                         isValidBmpFile(getCarouselCenterThumbPath(book))
                   : epub.generateThumbBmp(coverHeight) && isValidHomeCoverPath(book.coverBmpPath, coverHeight);
+          {
+            const auto heap = MemoryBudget::snapshot();
+            LOG_INF("CVR", "EPUB thumb success=%d heap free=%u maxAlloc=%u", success ? 1 : 0, heap.freeHeap,
+                    heap.maxAllocHeap);
+          }
           if (!success && !isLyraCarouselTheme()) {
             removeInvalidHomeCoverTarget(book.coverBmpPath, coverHeight);
             book.coverBmpPath = "";

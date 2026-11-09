@@ -919,6 +919,8 @@ bool Epub::generateThumbBmpToPath(int width, int height, const std::string& thum
     return false;
   }
 
+  LOG_INF("CVR", "Thumb %dx%d -> '%s' cover='%s'", width, height, thumbPath.c_str(),
+          bookMetadataCache->coreMetadata.coverItemHref.c_str());
   return generateThumbBmpForCover(width, height, thumbPath, bookMetadataCache->coreMetadata.coverItemHref);
 }
 
@@ -941,7 +943,11 @@ bool Epub::generateThumbBmpFromSource(int height) {
     LOG_ERR("EBP", "Could not open EPUB for cover metadata");
     return false;
   }
-  if (!parseContentOpf(*metadata, /*writeSpineEntries=*/false, /*metadataOnly=*/false, zip.get())) return false;
+  if (!parseContentOpf(*metadata, /*writeSpineEntries=*/false, /*metadataOnly=*/false, zip.get())) {
+    LOG_INF("CVR", "Cover metadata parse failed: '%s'", filepath.c_str());
+    return false;
+  }
+  LOG_INF("CVR", "Cover from source: '%s' cover='%s'", filepath.c_str(), metadata->coverItemHref.c_str());
   zip.reset();
   // The cover of a protected book is encrypted like everything else.
   if (!decryptor && !openProtection()) return false;
@@ -953,7 +959,7 @@ bool Epub::generateThumbBmpFromSource(int height) {
 bool Epub::generateThumbBmpForCover(int width, int height, const std::string& thumbPath,
                                     const std::string& coverImageHref) const {
   if (coverImageHref.empty()) {
-    LOG_DBG("EBP", "No known cover image for thumbnail");
+    LOG_INF("CVR", "No known cover image for thumbnail");
     return false;
   }
 
@@ -964,7 +970,10 @@ bool Epub::generateThumbBmpForCover(int width, int height, const std::string& th
   if (FsHelpers::hasJpgExtension(coverImageHref)) {
     LOG_DBG("EBP", "Generating thumb BMP from JPG cover image");
     const auto coverJpgTempPath = getCachePath() + "/.cover.jpg";
-    if (!extractItemToFile(coverImageHref, coverJpgTempPath)) return false;
+    if (!extractItemToFile(coverImageHref, coverJpgTempPath)) {
+      LOG_INF("CVR", "Cover extract failed: '%s' -> '%s'", coverImageHref.c_str(), coverJpgTempPath.c_str());
+      return false;
+    }
 
     HalFile coverJpg;
     if (!Storage.openFileForRead("EBP", coverJpgTempPath, coverJpg)) {
@@ -973,6 +982,7 @@ bool Epub::generateThumbBmpForCover(int width, int height, const std::string& th
 
     HalFile thumbBmp;
     if (!Storage.openFileForWrite("EBP", thumbPath, thumbBmp)) {
+      LOG_INF("CVR", "Cannot open thumb for write: '%s'", thumbPath.c_str());
       return false;
     }
     // Use smaller target size for Continue Reading card (half of screen: 240x400)
@@ -985,6 +995,11 @@ bool Epub::generateThumbBmpForCover(int width, int height, const std::string& th
     // Explicitly close() files before calling Storage.remove()
     coverJpg.close();
     thumbBmp.close();
+    {
+      const auto heap = MemoryBudget::snapshot();
+      LOG_INF("CVR", "JPG thumb decode success=%d permanent=%d heap free=%u maxAlloc=%u", success ? 1 : 0,
+              permanentJpegFailure ? 1 : 0, heap.freeHeap, heap.maxAllocHeap);
+    }
 
     if (!success) {
       LOG_ERR("EBP", "Failed to generate thumb BMP from JPG cover image");
