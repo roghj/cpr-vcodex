@@ -2192,8 +2192,8 @@ bool GfxRenderer::copyBufferToRegion(int lx, int ly, int lw, int lh, const uint8
 bool GfxRenderer::writeRegionRows(int lx, int ly, int lw, int lh,
                                   const std::function<bool(const uint8_t*, size_t)>& sink) const {
   int x0, y0, x1, y1;
-  if (!frameBuffer || !logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0,
-                                                   &x1, &y1)) {
+  if (!frameBuffer ||
+      !logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0, &x1, &y1)) {
     return false;
   }
   const int byteX0 = x0 / 8;
@@ -2207,8 +2207,8 @@ bool GfxRenderer::writeRegionRows(int lx, int ly, int lw, int lh,
 bool GfxRenderer::readRegionRows(int lx, int ly, int lw, int lh,
                                  const std::function<bool(uint8_t*, size_t)>& source) const {
   int x0, y0, x1, y1;
-  if (!frameBuffer || !logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0,
-                                                   &x1, &y1)) {
+  if (!frameBuffer ||
+      !logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0, &x1, &y1)) {
     return false;
   }
   constexpr size_t MAX_ROW_BYTES = 256;
