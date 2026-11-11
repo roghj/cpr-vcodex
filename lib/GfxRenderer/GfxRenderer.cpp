@@ -2189,6 +2189,52 @@ bool GfxRenderer::copyBufferToRegion(int lx, int ly, int lw, int lh, const uint8
   return true;
 }
 
+bool GfxRenderer::writeRegionRows(int lx, int ly, int lw, int lh,
+                                  const std::function<bool(const uint8_t*, size_t)>& sink) const {
+  int x0, y0, x1, y1;
+  if (!frameBuffer || !logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0,
+                                                   &x1, &y1)) {
+    return false;
+  }
+  const int byteX0 = x0 / 8;
+  const size_t bytesPerRow = static_cast<size_t>(x1 / 8 - byteX0 + 1);
+  for (int row = y0; row <= y1; row++) {
+    if (!sink(frameBuffer + row * panelWidthBytes + byteX0, bytesPerRow)) return false;
+  }
+  return true;
+}
+
+bool GfxRenderer::readRegionRows(int lx, int ly, int lw, int lh,
+                                 const std::function<bool(uint8_t*, size_t)>& source) const {
+  int x0, y0, x1, y1;
+  if (!frameBuffer || !logicalRectToPhysicalBounds(orientation, lx, ly, lw, lh, panelWidth, panelHeight, &x0, &y0,
+                                                   &x1, &y1)) {
+    return false;
+  }
+  constexpr size_t MAX_ROW_BYTES = 256;
+  const int byteX0 = x0 / 8;
+  const int byteX1 = x1 / 8;
+  const size_t bytesPerRow = static_cast<size_t>(byteX1 - byteX0 + 1);
+  if (bytesPerRow > MAX_ROW_BYTES) return false;
+  // MSB is the leftmost pixel (see drawPixelRaw).
+  uint8_t firstMask = static_cast<uint8_t>(0xFF >> (x0 % 8));
+  const uint8_t lastMask = static_cast<uint8_t>(0xFF << (7 - x1 % 8));
+  if (byteX0 == byteX1) firstMask &= lastMask;
+
+  uint8_t row[MAX_ROW_BYTES];
+  for (int y = y0; y <= y1; y++) {
+    if (!source(row, bytesPerRow)) return false;
+    uint8_t* dst = frameBuffer + y * panelWidthBytes + byteX0;
+    dst[0] = static_cast<uint8_t>((dst[0] & ~firstMask) | (row[0] & firstMask));
+    if (bytesPerRow > 1) {
+      if (bytesPerRow > 2) memcpy(dst + 1, row + 1, bytesPerRow - 2);
+      const size_t last = bytesPerRow - 1;
+      dst[last] = static_cast<uint8_t>((dst[last] & ~lastMask) | (row[last] & lastMask));
+    }
+  }
+  return true;
+}
+
 int GfxRenderer::getSpaceWidth(const int fontId, const EpdFontFamily::Style style) const {
   auto sdIt = sdCardFonts_.find(fontId);
   if (sdIt != sdCardFonts_.end() && sdIt->second->hasAdvanceTable()) {

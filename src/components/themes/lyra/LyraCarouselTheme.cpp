@@ -5,6 +5,8 @@
 #include <HalStorage.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -138,6 +140,69 @@ void drawProgressBadge(GfxRenderer& renderer, const RecentBook& book, const int 
   renderer.drawText(SMALL_FONT_ID, badgeX + kProgressBadgePadX, badgeY + kProgressBadgePadY - 1, progressText.c_str(),
                     false, EpdFontFamily::BOLD);
 }
+
+// Cover tiles: the framebuffer bytes of a cover already drawn at one carousel
+// slot (center, left or right), stored next to the book's thumbnail. When the
+// recent-books order changes (opening a side book moves it to the front),
+// every carousel frame around it must be rebuilt; pasting tiles avoids
+// decoding and dithering three thumbnail BMPs per frame, which is what made
+// Home stall after returning from a side book.
+constexpr uint32_t kTileMagic = 0x3154434C;  // "LCT1"
+
+struct CoverTileHeader {
+  uint32_t magic;
+  uint32_t sourceBytes;  // size of the thumbnail the tile was drawn from
+};
+
+std::string coverTilePath(const GfxRenderer& renderer, const std::string& coverBmpPath, const int x, const int y,
+                          const int w, const int h) {
+  const size_t slash = coverBmpPath.rfind('/');
+  if (slash == std::string::npos) return {};
+  char name[96];
+  std::snprintf(name, sizeof(name), "/carousel_tile_%d_%d_%dx%d_o%d%s.bin", x, y, w, h,
+                static_cast<int>(renderer.getOrientation()), renderer.isDarkMode() ? "d" : "");
+  return coverBmpPath.substr(0, slash) + name;
+}
+
+bool loadCoverTile(const GfxRenderer& renderer, const std::string& tilePath, const uint32_t sourceBytes, const int x,
+                   const int y, const int w, const int h) {
+  if (tilePath.empty() || !Storage.exists(tilePath.c_str())) return false;
+  HalFile file;
+  if (!Storage.openFileForRead("HOME", tilePath, file)) return false;
+  CoverTileHeader header{};
+  const size_t expected = renderer.getRegionByteSize(x, y, w, h);
+  bool ok = expected > 0 && file.size() == sizeof(header) + expected &&
+            file.read(&header, sizeof(header)) == static_cast<int>(sizeof(header)) && header.magic == kTileMagic &&
+            header.sourceBytes == sourceBytes;
+  if (ok) {
+    ok = renderer.readRegionRows(x, y, w, h, [&file](uint8_t* row, const size_t rowBytes) {
+      return file.read(row, rowBytes) == static_cast<int>(rowBytes);
+    });
+    if (!ok) {
+      // A partial paste leaves mixed bytes; clear the slot before the caller redraws it.
+      renderer.fillRect(x, y, w, h, false);
+    }
+  }
+  file.close();
+  if (!ok) Storage.remove(tilePath.c_str());
+  return ok;
+}
+
+void saveCoverTile(const GfxRenderer& renderer, const std::string& tilePath, const uint32_t sourceBytes, const int x,
+                   const int y, const int w, const int h) {
+  if (tilePath.empty()) return;
+  HalFile file;
+  if (!Storage.openFileForWrite("HOME", tilePath, file)) return;
+  const CoverTileHeader header{kTileMagic, sourceBytes};
+  bool ok = file.write(&header, sizeof(header)) == sizeof(header);
+  if (ok) {
+    ok = renderer.writeRegionRows(x, y, w, h, [&file](const uint8_t* row, const size_t rowBytes) {
+      return file.write(row, rowBytes) == rowBytes;
+    });
+  }
+  file.close();
+  if (!ok) Storage.remove(tilePath.c_str());
+}
 }  // namespace
 
 void LyraCarouselTheme::setPreRenderIndex(int index) { lastCarouselSelectorIndex = index; }
@@ -209,14 +274,22 @@ void LyraCarouselTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect,
       }
       HalFile file;
       if (Storage.openFileForRead("HOME", thumbPath, file)) {
-        Bitmap bitmap(file);
-        if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-          const float bmpRatio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
-          const float tileRatio = static_cast<float>(maxW) / static_cast<float>(maxH);
-          const float cropX = (bmpRatio > tileRatio) ? (1.0f - tileRatio / bmpRatio) : 0.0f;
-          renderer.drawBitmap(bitmap, x, y, maxW, maxH, cropX, 0.0f);
-          renderer.maskRoundedRectOutsideCorners(x, y, maxW, maxH, kCornerRadius, Color::White);
+        const uint32_t sourceBytes = static_cast<uint32_t>(file.size());
+        const std::string tilePath = coverTilePath(renderer, book.coverBmpPath, x, y, maxW, maxH);
+        if (sourceBytes > 0 && loadCoverTile(renderer, tilePath, sourceBytes, x, y, maxW, maxH)) {
           hasCover = true;
+        } else {
+          Bitmap bitmap(file);
+          if (bitmap.parseHeaders() == BmpReaderError::Ok) {
+            const float bmpRatio = static_cast<float>(bitmap.getWidth()) / static_cast<float>(bitmap.getHeight());
+            const float tileRatio = static_cast<float>(maxW) / static_cast<float>(maxH);
+            const float cropX = (bmpRatio > tileRatio) ? (1.0f - tileRatio / bmpRatio) : 0.0f;
+            if (renderer.drawBitmap(bitmap, x, y, maxW, maxH, cropX, 0.0f)) {
+              renderer.maskRoundedRectOutsideCorners(x, y, maxW, maxH, kCornerRadius, Color::White);
+              hasCover = true;
+              if (sourceBytes > 0) saveCoverTile(renderer, tilePath, sourceBytes, x, y, maxW, maxH);
+            }
+          }
         }
         file.close();
       }

@@ -17,6 +17,7 @@ class TtfEpdFont;
 
 #include <array>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -482,6 +483,16 @@ class GfxRenderer {
   bool copyRegionToBuffer(int logicalX, int logicalY, int logicalW, int logicalH, uint8_t* buf, size_t bufSize) const;
   bool copyBufferToRegion(int logicalX, int logicalY, int logicalW, int logicalH, const uint8_t* buf,
                           size_t bufSize) const;
+
+  // Row-streamed variants for SD-backed tile caches: the callback sees one
+  // physical row (same byte layout as copyRegionToBuffer) at a time, so no
+  // region-sized heap buffer is needed. readRegionRows keeps the framebuffer
+  // bits that lie outside the rect in the first/last byte of every row, so a
+  // tile can be pasted next to different neighbours without stray pixels.
+  bool writeRegionRows(int logicalX, int logicalY, int logicalW, int logicalH,
+                       const std::function<bool(const uint8_t* row, size_t rowBytes)>& sink) const;
+  bool readRegionRows(int logicalX, int logicalY, int logicalW, int logicalH,
+                      const std::function<bool(uint8_t* row, size_t rowBytes)>& source) const;
 };
 
 // RAII wrapper over beginStripTarget()/endStripTarget() (fork; used by the
