@@ -46,11 +46,14 @@ SUPPORTED_ENVS = (
     "x4pro-gh_release_rc",
 )
 INITIAL_RELEASE_NUMBER = 0
-# Roghj fork: release tags and on-device version names end in "-Roghj"
-# (e.g. 1.6.5.7-Roghj). Upstream "-cpr-vcodex" tags are still recognised when
-# deriving the current release number from tags or README text.
+# Roghj fork: release tags and on-device version names end in "-Roghj" plus
+# the fork revision from platformio.ini (e.g. 1.6.5.7-Roghj-0.0.2). Upstream
+# "-cpr-vcodex" tags are still recognised when deriving the current release
+# number from tags or README text.
 FORK_VERSION_SUFFIX = "-Roghj"
-RELEASE_TAG_SUFFIX_RE = r"-(?:Roghj|cpr-vcodex)"
+# Roghj releases also carry the fork revision: 1.6.5.7-Roghj-0.0.2.
+ROGHJ_REVISION_RE = r"\d+\.\d+\.\d+"
+RELEASE_TAG_SUFFIX_RE = rf"-(?:Roghj(?:-{ROGHJ_REVISION_RE})?|cpr-vcodex)"
 
 
 def warn(msg):
@@ -69,6 +72,24 @@ def get_base_version(project_dir):
         warn("No [crosspoint] version in platformio.ini; base version will be \"0.0.0\"")
         return "0.0.0"
     return config.get("crosspoint", "version")
+
+
+def get_roghj_revision(project_dir):
+    """Fork revision from platformio.ini ([crosspoint] roghj_version), or None."""
+    ini_path = os.path.join(project_dir, "platformio.ini")
+    config = configparser.ConfigParser()
+    config.read(ini_path, encoding="utf-8")
+    if not config.has_option("crosspoint", "roghj_version"):
+        return None
+    value = config.get("crosspoint", "roghj_version").strip()
+    if not re.fullmatch(ROGHJ_REVISION_RE, value):
+        raise ValueError(f"[crosspoint] roghj_version must look like 0.0.2, got {value!r}")
+    return value
+
+
+def fork_release_suffix(project_dir):
+    revision = get_roghj_revision(project_dir)
+    return f"{FORK_VERSION_SUFFIX}-{revision}" if revision else FORK_VERSION_SUFFIX
 
 
 def run_git_value(project_dir, args, label):
@@ -127,7 +148,14 @@ def _extract_release_number(base_version, text):
 def _latest_tag_release_number(project_dir, base_version):
     try:
         tags = subprocess.check_output(
-            ["git", "tag", "--list", f"{base_version}.*-cpr-vcodex", f"{base_version}.*{FORK_VERSION_SUFFIX}"],
+            [
+                "git",
+                "tag",
+                "--list",
+                f"{base_version}.*-cpr-vcodex",
+                f"{base_version}.*{FORK_VERSION_SUFFIX}",
+                f"{base_version}.*{FORK_VERSION_SUFFIX}-*",
+            ],
             text=True,
             stderr=subprocess.PIPE,
             cwd=project_dir,
@@ -211,7 +239,8 @@ def release_number_from_tag(base_version):
     match = re.fullmatch(rf"{re.escape(base_version)}\.(\d+){RELEASE_TAG_SUFFIX_RE}", tag)
     if not match:
         raise ValueError(
-            f"Release tag {tag!r} does not match expected pattern {base_version}.<release>{FORK_VERSION_SUFFIX}"
+            f"Release tag {tag!r} does not match expected pattern "
+            f"{base_version}.<release>{FORK_VERSION_SUFFIX}-<revision>"
         )
 
     return int(match.group(1)), tag
@@ -334,7 +363,15 @@ def inject_version(env):
         build_counter = release_number
         # Release version strings are identical for C3 and X4 Pro: the tag is
         # shared and package_vcodex_bin.py adds the "-x4pro" artifact suffix.
-        version_string = f"{base_version}.{release_number}{fork_suffix}"
+        # Roghj releases carry the fork revision (1.6.5.7-Roghj-0.0.2); a tagged
+        # build must use exactly the tag so the asset is <tag>.bin.
+        release_suffix = fork_release_suffix(project_dir) if fork_suffix else ""
+        version_string = f"{base_version}.{release_number}{release_suffix}"
+        if tagged_release and fork_suffix and FORK_VERSION_SUFFIX in tag and tag != version_string:
+            raise ValueError(
+                f"Release tag {tag!r} does not match platformio.ini version {version_string!r}; "
+                "update [crosspoint] roghj_version or the tag"
+            )
         build_kind = "release" + kind_suffix
     elif kind_env == "gh_release_rc":
         rc_hash = os.environ.get("CROSSPOINT_RC_HASH", "unknown")

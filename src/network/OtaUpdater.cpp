@@ -31,8 +31,12 @@ constexpr char firmwareManifestFallbackUrl[] =
     "https://raw.githubusercontent.com/roghj/cpr-vcodex/master/docs/firmware/manifest.json";
 constexpr char latestReleaseUrl[] = "https://api.github.com/repos/roghj/cpr-vcodex/releases/latest";
 
+// parts[0..3]: 1.6.5.7; parts[4..6]: Roghj fork revision (1.6.5.7-Roghj-0.0.2).
+// A version without the revision compares as revision 0.0.0.
+constexpr int kVersionParts = 7;
+
 struct ParsedVersion {
-  int parts[4] = {0, 0, 0, 0};
+  int parts[kVersionParts] = {0, 0, 0, 0, 0, 0, 0};
   bool parsed = false;
   bool isRc = false;
   bool isDev = false;
@@ -75,6 +79,25 @@ ParsedVersion parseVersion(const char* version) {
       break;
     }
     ++cursor;
+  }
+
+  if (parsedVersion.parsed) {
+    const char* revision = strstr(cursor, "-Roghj-");
+    if (revision != nullptr) {
+      revision += sizeof("-Roghj-") - 1;
+      for (int index = 4; index < kVersionParts && std::isdigit(static_cast<unsigned char>(*revision)); ++index) {
+        int value = 0;
+        while (std::isdigit(static_cast<unsigned char>(*revision))) {
+          value = value * 10 + (*revision - '0');
+          ++revision;
+        }
+        parsedVersion.parts[index] = value;
+        if (*revision != '.') {
+          break;
+        }
+        ++revision;
+      }
+    }
   }
 
   parsedVersion.isRc = strstr(version, "-rc") != nullptr || strstr(version, ".rc") != nullptr;
@@ -239,7 +262,7 @@ bool OtaUpdater::isUpdateNewer() const {
 
   const bool currentPreRelease = currentVersion.isRc || currentVersion.isDev;
   const bool latestPreRelease = latest.isRc || latest.isDev;
-  for (int index = 0; index < 4; ++index) {
+  for (int index = 0; index < kVersionParts; ++index) {
     if (latest.parts[index] != currentVersion.parts[index]) {
       return latest.parts[index] > currentVersion.parts[index];
     }

@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 
-TAG_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)-(?:cpr-vcodex|Roghj)$")
+TAG_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)-(?:cpr-vcodex|Roghj(?:-\d+\.\d+\.\d+)?)$")
 REPO = "roghj/cpr-vcodex"
 BREAK_RE = re.compile(r"\s*<br\s*/?>\s*", re.IGNORECASE)
 
@@ -33,8 +33,8 @@ def extract_changes(changelog: str, version: str) -> str:
 def render_release_notes(changelog_path: Path, tag: str) -> str:
     version = version_from_tag(tag)
     changelog = changelog_path.read_text(encoding="utf-8")
-    if tag.endswith("-Roghj"):
-        # Roghj releases use a row named after the full tag (`1.6.5.7-Roghj`);
+    if "-Roghj" in tag:
+        # Roghj releases use a row named after the full tag (`1.6.5.7-Roghj-0.0.2`);
         # without one, publish a short generic note instead of failing.
         try:
             changes = extract_changes(changelog, tag)

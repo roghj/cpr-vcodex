@@ -9,6 +9,7 @@ on:
     tags:
       - '*-cpr-vcodex'
       - '*-Roghj'
+      - '*-Roghj-*'
 
 concurrency:
   group: release-${{ github.ref }}

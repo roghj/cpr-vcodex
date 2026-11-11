@@ -20,8 +20,12 @@ APP_PARTITION_SIZE = 6_553_600
 MIN_FIRMWARE_SIZE = 1_000_000
 # Roghj fork tags end in "-Roghj"; upstream "-cpr-vcodex" tags stay accepted.
 FIRMWARE_TAG_SUFFIXES = ("-Roghj", "-cpr-vcodex")
-VERSION_RE = re.compile(r"\b\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-(?:[0-9A-Za-z._-]*cpr-vcodex|Roghj)\b")
-FIRMWARE_TAG_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-(?:cpr-vcodex|Roghj)$")
+VERSION_RE = re.compile(
+    r"\b\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-(?:[0-9A-Za-z._-]*cpr-vcodex|Roghj(?:-\d+\.\d+\.\d+)?)\b"
+)
+FIRMWARE_TAG_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+(?:[.-][0-9A-Za-z]+)?-(?:cpr-vcodex|Roghj(?:-\d+\.\d+\.\d+)?)$")
+# Roghj fork revision at the end of a tag: 1.6.5.7-Roghj-0.0.2.
+ROGHJ_REVISION_TAG_RE = re.compile(r"-Roghj-(\d+)\.(\d+)\.(\d+)$")
 # Release asset URLs retain suffix awareness so old X4 Pro links are not ever
 # rewritten to the C3 image while X4 Pro distribution is withdrawn.
 DOWNLOAD_URL_RE = re.compile(
@@ -175,11 +179,16 @@ def select_target_asset(release: dict[str, Any], target: FirmwareTarget) -> dict
     return None
 
 
-def firmware_tag_sort_key(tag: str) -> tuple[int, int, int, int, int, str] | None:
+def firmware_tag_sort_key(tag: str) -> tuple[int, ...] | tuple[Any, ...] | None:
     if not FIRMWARE_TAG_RE.fullmatch(tag):
         return None
 
     prefix = tag
+    revision = (0, 0, 0)
+    revision_match = ROGHJ_REVISION_TAG_RE.search(prefix)
+    if revision_match:
+        revision = tuple(int(part) for part in revision_match.groups())
+        prefix = prefix[: revision_match.start()]
     for suffix in FIRMWARE_TAG_SUFFIXES:
         prefix = prefix.removesuffix(suffix)
     match = FIRMWARE_VERSION_PREFIX_RE.match(prefix)
@@ -188,7 +197,7 @@ def firmware_tag_sort_key(tag: str) -> tuple[int, int, int, int, int, str] | Non
 
     numbers = tuple(int(part) for part in match.groups())
     stable = 1 if prefix == ".".join(str(number) for number in numbers) else 0
-    return (*numbers, stable, tag)
+    return (*numbers, *revision, stable, tag)
 
 
 def fetch_firmware_release_by_tag(repo: str, tag: str, token: str | None) -> dict[str, Any]:
@@ -212,7 +221,7 @@ def fetch_latest_firmware_release(repo: str, token: str | None) -> dict[str, Any
     if not isinstance(releases, list):
         raise RuntimeError("GitHub releases response was not a list")
 
-    candidates: list[tuple[tuple[int, int, int, int, int, str], dict[str, Any]]] = []
+    candidates: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     for release in releases:
         if release.get("draft") or release.get("prerelease"):
             continue

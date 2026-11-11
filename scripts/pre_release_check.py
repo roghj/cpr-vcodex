@@ -115,9 +115,9 @@ def get_base_version(project_dir: Path) -> str:
 
 
 def parse_release_tag(tag: str, base_version: str) -> int:
-    match = re.fullmatch(rf"{re.escape(base_version)}\.(\d+)-(?:Roghj|cpr-vcodex)", tag)
+    match = re.fullmatch(rf"{re.escape(base_version)}\.(\d+)-(?:Roghj(?:-\d+\.\d+\.\d+)?|cpr-vcodex)", tag)
     if not match:
-        fail(f"Tag must match {base_version}.<release>-Roghj, got {tag!r}")
+        fail(f"Tag must match {base_version}.<release>-Roghj-<revision>, got {tag!r}")
     return int(match.group(1))
 
 
@@ -248,7 +248,8 @@ def validate_artifacts(
         fail(f"Missing packaged {target.env} metadata artifact: {metadata_path}")
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    expected_version = f"{base_version}.{release_seq}"
+    # Roghj release builds embed the whole tag as their version (1.6.5.7-Roghj-0.0.2).
+    expected_version = tag if "-Roghj" in tag else f"{base_version}.{release_seq}"
     checks = {
         "artifactName": f"{stem}.bin",
         "environment": target.env,

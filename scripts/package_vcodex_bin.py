@@ -119,9 +119,9 @@ def package_vcodex_bin(source, target, env):
     board_suffix = ""
     if pio_env.startswith("x4pro") and not safe_version.endswith("-x4pro"):
         board_suffix = "-x4pro"
-    # Roghj fork versions already carry their name (1.6.5.7-Roghj), which is
+    # Roghj fork versions already carry their name (1.6.5.7-Roghj-0.0.2), which is
     # also the release tag, so the artifact is <tag>.bin without another suffix.
-    if safe_version.endswith(FORK_VERSION_SUFFIX):
+    if safe_version.endswith(FORK_VERSION_SUFFIX) or re.search(rf"{re.escape(FORK_VERSION_SUFFIX)}-\d+\.\d+\.\d+$", safe_version):
         artifact_stem = f"{safe_version}{board_suffix}"
     else:
         artifact_stem = f"{safe_version}-cpr-vcodex{board_suffix}"

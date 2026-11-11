@@ -6,7 +6,7 @@ set(OTA_TEST_SOURCES
   ${REPO_ROOT}/lib/JsonParser/ReleaseJsonParser.cpp
   ${REPO_ROOT}/freeink-sdk/libs/network/JsonSax/src/StreamingJsonParser.cpp
 )
-foreach(target OtaUpdateTest OtaUpdateX3Test OtaUpdateDevTest)
+foreach(target OtaUpdateTest OtaUpdateX3Test OtaUpdateDevTest OtaUpdateRoghjTest)
   add_executable(${target} ${OTA_TEST_SOURCES})
   target_compile_definitions(${target} PRIVATE TEST_REPO_ROOT="${REPO_ROOT}")
   target_include_directories(${target} PRIVATE
@@ -15,10 +15,17 @@ foreach(target OtaUpdateTest OtaUpdateX3Test OtaUpdateDevTest)
     ${REPO_ROOT}/test/reader_regressions/fakes
   )
   target_link_libraries(${target} PRIVATE crosspoint_test_common GTest::gtest_main)
-  gtest_discover_tests(${target} TEST_PREFIX "${target}.")
+  if(target STREQUAL "OtaUpdateRoghjTest")
+    # Installed version is a Roghj release; only the revision-ordering suite applies.
+    gtest_discover_tests(${target} TEST_PREFIX "${target}." TEST_FILTER "OtaUpdate.Roghj*")
+  else()
+    gtest_discover_tests(${target} TEST_PREFIX "${target}.")
+  endif()
 endforeach()
 
 target_compile_definitions(OtaUpdateTest PRIVATE FREEINK_DEVICE_X4=1)
 target_compile_definitions(OtaUpdateX3Test PRIVATE FREEINK_DEVICE_X3=1)
 target_compile_definitions(OtaUpdateDevTest PRIVATE FREEINK_DEVICE_X4=1 FREEINK_DEVICE_X3=1
   TEST_INSTALLED_VERSION="1.6.0.38.dev35-a4ae01a7")
+target_compile_definitions(OtaUpdateRoghjTest PRIVATE FREEINK_DEVICE_X4=1
+  TEST_INSTALLED_VERSION="1.6.5.7-Roghj-0.0.2" TEST_ROGHJ_REVISION=1)

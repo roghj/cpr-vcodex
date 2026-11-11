@@ -270,6 +270,27 @@ TEST_F(OtaUpdate, ReleaseAfterDevelopmentBuildRemainsReachable) {
   EXPECT_TRUE(updater.isUpdateNewer());
 }
 
+#ifdef TEST_ROGHJ_REVISION
+// Installed: 1.6.5.7-Roghj-0.0.2. The fork revision after "-Roghj-" decides
+// between releases of the same CPR-vCodex base version.
+TEST_F(OtaUpdate, RoghjRevisionOrdersReleasesOfTheSameBase) {
+  const auto isNewer = [this](const char* published) {
+    version = published;
+    EXPECT_EQ(updater.checkForUpdate(), OtaUpdater::OK);
+    return updater.isUpdateNewer();
+  };
+  EXPECT_TRUE(isNewer("1.6.5.7-Roghj-0.0.3"));
+  EXPECT_TRUE(isNewer("1.6.5.7-Roghj-0.1.0"));
+  EXPECT_TRUE(isNewer("1.6.5.7-Roghj-0.0.10"));
+  EXPECT_TRUE(isNewer("1.6.5.8-Roghj-0.0.1"));
+  EXPECT_FALSE(isNewer("1.6.5.7-Roghj-0.0.2"));
+  EXPECT_FALSE(isNewer("1.6.5.7-Roghj-0.0.1"));
+  EXPECT_FALSE(isNewer("1.6.5.7-Roghj"));
+  EXPECT_FALSE(isNewer("1.6.5.7-cpr-vcodex"));
+  EXPECT_FALSE(isNewer("1.6.5.6-Roghj-0.0.9"));
+}
+#endif
+
 TEST_F(OtaUpdate, FailedRecheckCannotReuseAnEarlierCandidate) {
   ASSERT_EQ(updater.checkForUpdate(), OtaUpdater::OK);
   manifestOk = false;
