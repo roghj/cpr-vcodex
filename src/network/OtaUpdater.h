@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 class OtaUpdater {
@@ -25,6 +26,26 @@ class OtaUpdater {
     WRONG_DEVICE_ERROR,
   };
 
+  // Roghj: timings of the last installUpdate(), so a slow online update can be
+  // diagnosed without a serial cable (OtaUpdateActivity writes them to the SD card).
+  struct InstallStats {
+    uint32_t beginMs = 0;     // esp_ota_begin (erases the target slot up front)
+    uint32_t downloadMs = 0;  // HTTPS transfer, including the writes below
+    uint32_t writeMs = 0;     // time inside esp_ota_write (flash)
+    uint32_t hashMs = 0;      // SHA-256 + board-tag scan
+    uint32_t finishMs = 0;    // esp_ota_end (image verification) + boot partition
+    uint32_t totalMs = 0;
+    uint32_t chunks = 0;      // body callbacks (chunk count)
+    size_t bytes = 0;
+    uint64_t writeUs = 0;  // accumulators behind writeMs / hashMs
+    uint64_t hashUs = 0;
+  };
+  const InstallStats& getInstallStats() const { return installStats; }
+
+ private:
+  InstallStats installStats;
+
+ public:
   size_t getOtaSize() const { return otaSize; }
 
   size_t getProcessedSize() const { return processedSize; }

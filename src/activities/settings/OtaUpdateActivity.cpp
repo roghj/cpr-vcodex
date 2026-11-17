@@ -1,6 +1,7 @@
 #include "OtaUpdateActivity.h"
 
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <I18n.h>
 #include <WiFi.h>
 
@@ -16,6 +17,31 @@
 #include "version.h"
 
 namespace {
+// Roghj: the X4 has no serial log, so each online update leaves its timings on the
+// SD card (overwritten by the next one) to show where a slow update spends its time.
+constexpr char OTA_TIMING_LOG_PATH[] = "/.crosspoint/ota-log.txt";
+
+void writeOtaTimingLog(const OtaUpdater& updater, const int result, const int rssi, const unsigned renders) {
+  const auto& st = updater.getInstallStats();
+  const double seconds = st.downloadMs > 0 ? st.downloadMs / 1000.0 : 0.0;
+  const double kbPerSecond = seconds > 0 ? (st.bytes / 1024.0) / seconds : 0.0;
+  char buf[512];
+  snprintf(buf, sizeof(buf),
+           "from=%s\nto=%s\nresult=%d\nrssi=%d dBm\nbytes=%u of %u\n"
+           "total=%lu ms\nerase(begin)=%lu ms\ndownload=%lu ms (%.1f KB/s)\n"
+           "  flash write=%lu ms\n  sha+tag=%lu ms\n  chunks=%lu (avg %lu B)\n"
+           "verify(end)=%lu ms\nscreen updates=%u\n",
+           CROSSPOINT_VERSION, updater.getLatestVersion().c_str(), result, rssi, static_cast<unsigned>(st.bytes),
+           static_cast<unsigned>(updater.getOtaSize()), static_cast<unsigned long>(st.totalMs),
+           static_cast<unsigned long>(st.beginMs), static_cast<unsigned long>(st.downloadMs), kbPerSecond,
+           static_cast<unsigned long>(st.writeMs), static_cast<unsigned long>(st.hashMs),
+           static_cast<unsigned long>(st.chunks),
+           static_cast<unsigned long>(st.chunks > 0 ? st.bytes / st.chunks : 0), static_cast<unsigned long>(st.finishMs),
+           renders);
+  Storage.mkdir("/.crosspoint");
+  Storage.writeFile(OTA_TIMING_LOG_PATH, String(buf));
+}
+
 std::string formatByteSizeCompact(const size_t bytes) {
   static constexpr const char* units[] = {"B", "KB", "MB", "GB"};
   double value = static_cast<double>(bytes);
@@ -161,11 +187,13 @@ void OtaUpdateActivity::render(RenderLock&&) {
     if (updater.getTotalSize() > 0) {
       updaterProgress = static_cast<float>(updater.getProcessedSize()) / static_cast<float>(updater.getTotalSize());
     }
-    // Only update every 2% at the most
-    if (static_cast<int>(updaterProgress * 50) == lastUpdaterPercentage / 2) {
+    // Roghj: redraw every 5% at the most (was 2%). Each e-ink refresh runs on the
+    // same single core as the TLS download and the flash writes.
+    if (static_cast<int>(updaterProgress * 20) == lastUpdaterPercentage / 5) {
       return;
     }
     lastUpdaterPercentage = static_cast<int>(updaterProgress * 100);
+    progressRenders++;
   }
 
   if (state == CHECKING_FOR_UPDATE) {
@@ -248,6 +276,8 @@ void OtaUpdateActivity::runUpdateInstall() {
   }
   requestUpdateAndWait();
   NetworkMemory::prepareBeforeNetwork(renderer, "OTA", "pre-install");
+  progressRenders = 0;
+  const int rssi = WiFi.RSSI();
   const auto res = updater.installUpdate(
       [](void* ctx) {
         // immediate=true notifies the render task directly. The default deferred path only
@@ -256,6 +286,7 @@ void OtaUpdateActivity::runUpdateInstall() {
         static_cast<OtaUpdateActivity*>(ctx)->requestUpdate(true);
       },
       this);
+  writeOtaTimingLog(updater, static_cast<int>(res), rssi, progressRenders);
 
   if (res != OtaUpdater::OK) {
     LOG_DBG("OTA", "Update failed: %d", res);

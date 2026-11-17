@@ -5,6 +5,7 @@
 // ip4_addr.h unless seen first. Pin this order; clang-format would otherwise sort
 // the local header last and break the build.
 #include "HttpDownloader.h"
+#include <Arduino.h>
 #include <FirmwareManifestJsonParser.h>
 #include <Logging.h>
 #include <ReleaseJsonParser.h>
@@ -302,9 +303,12 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     return INTERNAL_UPDATE_ERROR;
   }
 
+  installStats = {};
+  const uint32_t installStartMs = millis();
   esp_ota_handle_t otaHandle = 0;
   const size_t beginSize = otaSize > 0 ? otaSize : OTA_SIZE_UNKNOWN;
   esp_err_t otaError = esp_ota_begin(updatePartition, beginSize, &otaHandle);
+  installStats.beginMs = millis() - installStartMs;
   if (otaError != ESP_OK) {
     LOG_ERR("OTA", "esp_ota_begin failed: %s", esp_err_to_name(otaError));
     return INTERNAL_UPDATE_ERROR;
@@ -344,17 +348,23 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
         }
       }
     }
+    const uint32_t hashStartUs = micros();
     tagScanner.feed(data, len);
     if (tagScanner.mismatch()) {
       wrongDevice = true;
       return false;
     }
     mbedtls_sha256_update(&shaContext, data, len);
+    const uint32_t writeStartUs = micros();
+    installStats.hashUs += writeStartUs - hashStartUs;
     if (esp_ota_write(otaHandle, data, len) != ESP_OK) {
       writeOk = false;
       return false;
     }
+    installStats.writeUs += micros() - writeStartUs;
+    installStats.chunks++;
     processedSize += len;
+    installStats.bytes = processedSize;
     if (totalSize > 0) {
       const int percent =
           static_cast<int>(std::min<size_t>(100, static_cast<uint64_t>(processedSize) * 100 / totalSize));
@@ -367,11 +377,17 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
   };
 
   HttpDownloader::DownloadError downloadResult;
+  const uint32_t downloadStartMs = millis();
   if (isC3X4Board()) {
     downloadResult = HttpDownloader::fetchOtaImage(otaUrl, consume);
   } else {
     downloadResult = HttpDownloader::fetchUrl(otaUrl, consume) ? HttpDownloader::OK : HttpDownloader::HTTP_ERROR;
   }
+
+  installStats.downloadMs = millis() - downloadStartMs;
+  installStats.writeMs = static_cast<uint32_t>(installStats.writeUs / 1000ULL);
+  installStats.hashMs = static_cast<uint32_t>(installStats.hashUs / 1000ULL);
+  installStats.totalMs = millis() - installStartMs;
 
   uint8_t actualSha256[32];
   mbedtls_sha256_finish(&shaContext, actualSha256);
@@ -395,6 +411,7 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     return HTTP_ERROR;
   }
 
+  const uint32_t finishStartMs = millis();
   otaError = esp_ota_end(otaHandle);
   if (otaError != ESP_OK) {
     LOG_ERR("OTA", "esp_ota_end failed: %s", esp_err_to_name(otaError));
@@ -406,6 +423,8 @@ OtaUpdater::OtaUpdaterError OtaUpdater::installUpdate(ProgressCallback onProgres
     return INTERNAL_UPDATE_ERROR;
   }
 
+  installStats.finishMs = millis() - finishStartMs;
+  installStats.totalMs = millis() - installStartMs;
   LOG_INF("OTA", "Update completed");
   return OK;
 }
