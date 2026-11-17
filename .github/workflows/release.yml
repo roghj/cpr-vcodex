@@ -10,6 +10,9 @@ on:
       - '*-cpr-vcodex'
       - '*-Roghj'
       - '*-Roghj-*'
+  # Roghj: started on a tag ref by "Publish Roghj Release" (tags pushed with
+  # GITHUB_TOKEN do not trigger the push event above).
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -17,6 +20,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   build-release:
@@ -178,3 +182,19 @@ jobs:
               --title "${release_tag}" \
               --notes-file "${notes_file}" || upload_assets
           fi
+
+  # Roghj: once the release assets are up, mirror them into GitHub Pages
+  # (auto-flash + OTA manifest) without a manual "Sync Auto Flash Firmware" run.
+  sync-autoflash:
+    name: Start Sync Auto Flash Firmware
+    needs: build-release
+    if: startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-Roghj')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch Sync Auto Flash Firmware
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run sync_autoflash_firmware.yml --repo "${GITHUB_REPOSITORY}" --ref master -f branch=master
+          echo "Sync Auto Flash Firmware started for ${GITHUB_REF_NAME}." >> "${GITHUB_STEP_SUMMARY}"

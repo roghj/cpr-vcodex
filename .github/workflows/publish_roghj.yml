@@ -1,0 +1,98 @@
+name: Publish Roghj Release
+
+# Roghj fork: one-step publish. A push to master that changes platformio.ini
+# (the [crosspoint] roghj_version bump done when the owner says "pode publicar"),
+# or a manual run, creates the missing release tag <base>-Roghj-<roghj_version>
+# and starts "Compile Release" on it. Compile Release then starts
+# "Sync Auto Flash Firmware" when the release assets are published.
+#
+# Tags pushed with GITHUB_TOKEN do not start other workflows on their own, so
+# Compile Release is dispatched explicitly (workflow_dispatch does start).
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - platformio.ini
+  workflow_dispatch:
+
+concurrency:
+  group: publish-roghj
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag-and-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Work out the release tag
+        id: tag
+        run: |
+          set -euo pipefail
+          base="$(python3 - <<'PY'
+          import configparser
+          config = configparser.RawConfigParser(inline_comment_prefixes=(";",))
+          config.read("platformio.ini", encoding="utf-8")
+          print(config.get("crosspoint", "version").strip())
+          PY
+          )"
+          revision="$(python3 - <<'PY'
+          import configparser
+          config = configparser.RawConfigParser(inline_comment_prefixes=(";",))
+          config.read("platformio.ini", encoding="utf-8")
+          print(config.get("crosspoint", "roghj_version").strip())
+          PY
+          )"
+          echo "version=${base} roghj_version=${revision}"
+
+          # Release number (the 4th field, e.g. the 7 in 1.6.5.7): highest one
+          # already used by a tag of this base version.
+          tags="$(git ls-remote --tags --refs origin | sed 's#.*refs/tags/##')"
+          number="$(printf '%s\n' "${tags}" \
+            | sed -nE "s/^${base//./\\.}\.([0-9]+)-(Roghj|cpr-vcodex).*/\1/p" \
+            | sort -n | tail -1)"
+          if [ -z "${number}" ]; then
+            echo "::error::No existing ${base}.N-Roghj / -cpr-vcodex tag to take the release number from."
+            exit 1
+          fi
+
+          tag="${base}.${number}-Roghj-${revision}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          if printf '%s\n' "${tags}" | grep -qxF "${tag}"; then
+            echo "Tag ${tag} already exists: nothing to publish."
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Will publish ${tag}."
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create the tag
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${TAG}"
+
+      - name: Start Compile Release
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}"
+          echo "### Publishing \`${TAG}\`" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Compile Release started; it starts Sync Auto Flash Firmware when done." >> "${GITHUB_STEP_SUMMARY}"
