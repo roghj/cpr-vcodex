@@ -560,6 +560,7 @@ void HomeActivity::loadRecentBooks(const int maxBooks) {
     return;
   }
 
+  RECENT_BOOKS.pruneCompleted();
   const auto& books = RECENT_BOOKS.getBooks();
   recentBooks.reserve(coverGridUi ? maxBooks : std::min(static_cast<int>(books.size()), maxBooks));
 

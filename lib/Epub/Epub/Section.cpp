@@ -486,6 +486,77 @@ bool Section::buildSomeMore(const int maxPages) {
   }
 }
 
+namespace {
+// Forwards to the temp HTML file and reports a short write once shouldAbort() fires,
+// which makes ZipFile::readFileToStream() stop the inflate cleanly.
+class AbortableFileSink : public Print {
+ public:
+  AbortableFileSink(HalFile& file, const std::function<bool()>& shouldAbort) : file_(file), shouldAbort_(shouldAbort) {}
+  size_t write(uint8_t b) override { return write(&b, 1); }
+  size_t write(const uint8_t* buf, size_t size) override {
+    if (aborted_ || (shouldAbort_ && shouldAbort_())) {
+      aborted_ = true;
+      return 0;
+    }
+    return file_.write(buf, size);
+  }
+  bool aborted() const { return aborted_; }
+
+ private:
+  HalFile& file_;
+  const std::function<bool()>& shouldAbort_;
+  bool aborted_ = false;
+};
+}  // namespace
+
+bool Section::isSpineReadyToOpen(const Epub& epub, const int spineIndex) {
+  const std::string index = std::to_string(spineIndex);
+  const std::string htmlPath = epub.getCachePath() + "/html/" + index + ".html";
+  if (Storage.exists(htmlPath.c_str())) return true;
+  const std::string binPath = epub.getCachePath() + "/sections/" + index + ".bin";
+  return Storage.exists(binPath.c_str());
+}
+
+bool Section::prefetchHtml(const Epub& epub, const int spineIndex, const std::function<bool()>& shouldAbort) {
+  if (spineIndex < 0 || spineIndex >= epub.getSpineItemsCount()) return false;
+  if (isSpineReadyToOpen(epub, spineIndex)) return true;
+
+  const auto localPath = epub.getSpineItem(spineIndex).href;
+  const auto htmlDir = epub.getCachePath() + "/html";
+  const auto htmlPath = htmlDir + "/" + std::to_string(spineIndex) + ".html";
+  // Own temp name: startBuild() uses ".tmp_<n>.html" and removes it on entry.
+  const auto prefetchTmpPath = htmlDir + "/.pre_" + std::to_string(spineIndex) + ".html";
+
+  Storage.mkdir(htmlDir.c_str());
+  if (Storage.exists(prefetchTmpPath.c_str())) {
+    Storage.remove(prefetchTmpPath.c_str());
+  }
+
+  HalFile tmpHtml;
+  if (!Storage.openFileForWrite("SCT", prefetchTmpPath, tmpHtml)) {
+    return false;
+  }
+  const auto t0 = millis();
+  AbortableFileSink sink(tmpHtml, shouldAbort);
+  // 4KB chunks (startBuild uses 8KB): this runs between page turns, so keep the extra
+  // buffers next to the 32KB inflate window small.
+  const bool streamed = epub.readItemContentsToStream(localPath, sink, 4096);
+  tmpHtml.close();
+
+  if (!streamed || sink.aborted()) {
+    Storage.remove(prefetchTmpPath.c_str());
+    LOG_DBG("SCT", "HTML prefetch of spine %d %s after %lums", spineIndex, sink.aborted() ? "interrupted" : "failed",
+            millis() - t0);
+    return false;
+  }
+  if (!Storage.rename(prefetchTmpPath.c_str(), htmlPath.c_str())) {
+    Storage.remove(prefetchTmpPath.c_str());
+    return false;
+  }
+  LOG_DBG("SCT", "Prefetched HTML of spine %d in %lums", spineIndex, millis() - t0);
+  return true;
+}
+
 bool Section::hasHtmlCache() const {
   const std::string htmlPath = epub->getCachePath() + "/html/" + std::to_string(spineIndex) + ".html";
   return Storage.exists(htmlPath.c_str());

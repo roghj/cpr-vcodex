@@ -930,6 +930,8 @@ void EpubReaderActivity::loop() {
     }
   }
 
+  maybePrefetchNextChapter();
+
   {
     RenderLock lock(RenderLock::Mode::Try);
     if (lock.ownsLock() && section && !section->isBuilding() && section->isPartial() && buildViewportWidth > 0 &&
@@ -2075,6 +2077,63 @@ void EpubReaderActivity::renderEndOfBook() {
   }
   renderer.displayBuffer();
   automaticPageTurnActive = false;
+}
+
+// Roghj: turning into a chapter whose HTML was never unzipped made the reader inflate
+// it from the EPUB before the first page could be laid out (multi-second on big
+// chapters, with no popup below 96 KB), so the page seemed to freeze. Near the end of a
+// chapter, once the page has settled and the reader is idle, unzip the next chapter's
+// HTML into the cache instead. Any button press interrupts it (it is retried later).
+void EpubReaderActivity::maybePrefetchNextChapter() {
+  constexpr unsigned long PREFETCH_IDLE_MS = 1500;
+  constexpr int PREFETCH_PAGES_BEFORE_END = 8;
+  constexpr uint8_t PREFETCH_MAX_FAILURES = 2;
+
+  if (!epub || !section || overlay != Overlay::None || lastRenderCompleteMs == 0) return;
+  // One attempt per rendered page: an interrupted or failed try waits for the next page.
+  if (prefetchLastAttemptRenderMs == lastRenderCompleteMs) return;
+  if (millis() - lastRenderCompleteMs < PREFETCH_IDLE_MS) return;
+
+  const int nextSpine = currentSpineIndex + 1;
+  if (nextSpine >= epub->getSpineItemsCount() || prefetchReadySpine == nextSpine) return;
+  if (prefetchFailedSpine == nextSpine && prefetchFailures >= PREFETCH_MAX_FAILURES) return;
+
+  const int remainingPages = static_cast<int>(section->estimatedTotalPages()) - 1 - section->currentPage;
+  if (remainingPages > PREFETCH_PAGES_BEFORE_END) return;
+  if (gpio.rawInputActive()) return;
+
+  // The render task must not draw while the framebuffer is lent, and a busy render
+  // task means a page is on its way: skip this round.
+  RenderLock lock(RenderLock::Mode::Try);
+  if (!lock.ownsLock()) return;
+  prefetchLastAttemptRenderMs = lastRenderCompleteMs;
+
+  if (Section::isSpineReadyToOpen(*epub, nextSpine)) {
+    prefetchReadySpine = nextSpine;
+    return;
+  }
+  if (!renderer.hasFrameBuffer()) return;
+
+  bool ok = false;
+  {
+    // Same memory path as a chapter build: the inflate window lives in the lent
+    // framebuffer, so this costs the heap nothing. The buffer comes back white.
+    GfxRenderer::FrameBufferLoan loan(renderer);
+    ok = Section::prefetchHtml(*epub, nextSpine, [] { return gpio.rawInputActive(); });
+  }
+  pageBufferStale = true;
+  requestUpdate();
+
+  if (ok) {
+    prefetchReadySpine = nextSpine;
+  } else if (!gpio.rawInputActive()) {
+    // A real failure (not a button press): give up on this spine after a few tries.
+    if (prefetchFailedSpine != nextSpine) {
+      prefetchFailedSpine = nextSpine;
+      prefetchFailures = 0;
+    }
+    prefetchFailures++;
+  }
 }
 
 bool EpubReaderActivity::backgroundBuildWanted() const {

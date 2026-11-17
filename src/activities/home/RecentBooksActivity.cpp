@@ -28,6 +28,7 @@ RecentBooksActivity::RecentBooksActivity(GfxRenderer& renderer, MappedInputManag
 void RecentBooksActivity::loadRecentBooks() {
   recentBooks.clear();
   recentBookCompletedStates.clear();
+  RECENT_BOOKS.pruneCompleted();
   const auto& books = RECENT_BOOKS.getBooks();
   recentBooks.reserve(books.size());
   recentBookCompletedStates.reserve(books.size());

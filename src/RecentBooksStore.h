@@ -65,6 +65,12 @@ class RecentBooksStore {
   // Returns true if any entry was removed. Does not persist; caller decides.
   bool pruneMissing();
 
+  // Roghj: drop entries whose reading stats say the book was finished (completed
+  // and last progress at the end). A re-read lowers the progress again, so the
+  // book shows up in Recents while it is being read a second time. Persists
+  // when anything was removed. No-op when the setting is off.
+  bool pruneCompleted();
+
   // Get the list of recent books (most recent first)
   const std::vector<RecentBook>& getBooks() const { return recentBooks; }
 

@@ -163,6 +163,10 @@ class ReadingStatsStore {
   const ReadingBookStats* findMatchingBookForPath(const std::string& path, const std::string& title = "",
                                                   const std::string& author = "") const;
   const ReadingSessionSnapshot& getLastSessionSnapshot() const { return lastSessionSnapshot; }
+  // Roghj: reading time of the open session (credited time plus the running gap, capped
+  // like noteActivity() caps it). 0 when no book session is active.
+  bool hasActiveSession() const { return activeSession.active; }
+  uint64_t getActiveSessionMs() const;
 
   const std::vector<ReadingBookStats>& getBooks() const { return books; }
   const std::vector<ReadingDayStats>& getReadingDays() const { return readingDays; }

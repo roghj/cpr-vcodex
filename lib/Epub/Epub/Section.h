@@ -130,6 +130,15 @@ class Section {
   // giant spine) zip inflation. Lets the reader skip the indexing popup on a fast reopen/rebuild.
   bool hasHtmlCache() const;
 
+  // Roghj: true when spineIndex needs no zip inflate on its next open, i.e. its unzipped
+  // HTML is cached or a section .bin (finalized or partial) already exists.
+  static bool isSpineReadyToOpen(const Epub& epub, int spineIndex);
+  // Roghj: unzip spineIndex's HTML into the per-book HTML cache ahead of time, so turning
+  // into that chapter skips the (multi-second on big chapters) inflate. shouldAbort is
+  // polled between output chunks; returning true stops the inflate, drops the partial
+  // temp file and returns false (try again later). Never touches an active build.
+  static bool prefetchHtml(const Epub& epub, int spineIndex, const std::function<bool()>& shouldAbort);
+
   // Look up the page number for an anchor id from the section cache file.
   std::optional<uint16_t> getPageForAnchor(const std::string& anchor) const;
 

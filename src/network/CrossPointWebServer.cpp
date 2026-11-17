@@ -544,6 +544,8 @@ constexpr WebSettingDef WEB_SETTINGS[] = {
     WEB_ENUM(StrId::STR_TITLE, statusBarTitle, OPT_BOOK_CHAPTER_HIDE, "statusBarTitle",
              StrId::STR_CUSTOMISE_STATUS_BAR),
     WEB_TOGGLE(StrId::STR_BATTERY, statusBarBattery, "statusBarBattery", StrId::STR_CUSTOMISE_STATUS_BAR),
+    WEB_TOGGLE(StrId::STR_READING_TIME, statusBarReadingTime, "statusBarReadingTime",
+               StrId::STR_CUSTOMISE_STATUS_BAR),
     WEB_ENUM(StrId::STR_XTC_STATUS_BAR, xtcStatusBarMode, OPT_XTC_STATUS_BAR, "xtcStatusBarMode",
              StrId::STR_CUSTOMISE_STATUS_BAR),
     WEB_ENUM(StrId::STR_CLOCK, statusBarClock, OPT_STATUS_BAR_CLOCK, "statusBarClock", StrId::STR_CUSTOMISE_STATUS_BAR),

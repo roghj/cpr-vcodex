@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "I18n.h"
+#include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "components/HeaderBackTapTarget.h"
 #include "components/UIScale.h"
@@ -1136,6 +1137,23 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     }
 
     leftClusterWidth += batteryWidth;
+  }
+
+  // Roghj: time read in the open session, right after the battery. The status bar is
+  // redrawn on every page render, so the value advances with each page turn.
+  if (sb.showReadingTime && READING_STATS.hasActiveSession()) {
+    const uint64_t sessionMinutes = READING_STATS.getActiveSessionMs() / 60000ULL;
+    char readingTimeBuf[16];
+    if (sessionMinutes < 60) {
+      snprintf(readingTimeBuf, sizeof(readingTimeBuf), "%umin", static_cast<unsigned>(sessionMinutes));
+    } else {
+      snprintf(readingTimeBuf, sizeof(readingTimeBuf), "%uh%02u", static_cast<unsigned>(sessionMinutes / 60),
+               static_cast<unsigned>(sessionMinutes % 60));
+    }
+    constexpr int readingTimeGap = 10;
+    const int gap = leftClusterWidth > 0 ? readingTimeGap : 0;
+    renderer.drawText(SMALL_FONT_ID, leftClusterX + leftClusterWidth + gap, textY, readingTimeBuf);
+    leftClusterWidth += gap + renderer.getTextWidth(SMALL_FONT_ID, readingTimeBuf);
   }
 
   // Draw Clock (any board whose RTC probe succeeded)

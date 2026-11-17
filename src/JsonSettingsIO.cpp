@@ -431,6 +431,7 @@ void applyLegacyStatusBarSettings(CrossPointSettings& settings) {
       settings.statusBarBattery = 1;
       break;
   }
+  settings.statusBarReadingTime = settings.statusBarBattery;
 }
 
 namespace {
@@ -669,7 +670,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
   loadToggle("showHiddenFiles", s.showHiddenFiles);
   loadToggle("hideFileExtension", s.hideFileExtension);
   loadToggle("libraryUseMetadata", s.libraryUseMetadata);
-  loadToggle("removeReadBooksFromRecents", s.removeReadBooksFromRecents);
+  loadToggle("hideFinishedFromRecents", s.removeReadBooksFromRecents);
 
   // Language: ISO code string for stability across enum reorders (upstream format).
   if (doc["language"].is<const char*>()) {
@@ -705,6 +706,7 @@ bool loadSettingsDirect(CrossPointSettings& s, const JsonDocument& doc, bool* ne
            CrossPointSettings::STATUS_BAR_PROGRESS_BAR_THICKNESS_COUNT);
   loadEnum("statusBarTitle", s.statusBarTitle, CrossPointSettings::STATUS_BAR_TITLE_COUNT);
   loadToggle("statusBarBattery", s.statusBarBattery);
+  loadToggle("statusBarReadingTime", s.statusBarReadingTime);
   loadEnum("xtcStatusBarMode", s.xtcStatusBarMode, CrossPointSettings::XTC_STATUS_BAR_MODE_COUNT);
   loadEnum("statusBarClock", s.statusBarClock, CrossPointSettings::STATUS_BAR_CLOCK_COUNT);
   loadValue("clockUtcOffsetQ", s.clockUtcOffsetQ, 0, 104);
@@ -1132,7 +1134,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["sleepTimeout"] = sleepTimeoutMinutesToLegacyEnum(s.sleepTimeoutMinutes);  // legacy mirror
   doc["showHiddenFiles"] = s.showHiddenFiles;
   doc["hideFileExtension"] = s.hideFileExtension;
-  doc["removeReadBooksFromRecents"] = s.removeReadBooksFromRecents;
+  doc["hideFinishedFromRecents"] = s.removeReadBooksFromRecents;
   // Language as ISO code string (upstream format).
   if (s.language < getLanguageCount()) doc["language"] = LANGUAGE_CODES[s.language];
   // uint16_t mask; omitted while unconfigured so the default keeps following the UI language.
@@ -1169,6 +1171,7 @@ bool JsonSettingsIO::saveSettings(const CrossPointSettings& s, const char* path)
   doc["statusBarProgressBarThickness"] = s.statusBarProgressBarThickness;
   doc["statusBarTitle"] = s.statusBarTitle;
   doc["statusBarBattery"] = s.statusBarBattery;
+  doc["statusBarReadingTime"] = s.statusBarReadingTime;
   doc["xtcStatusBarMode"] = s.xtcStatusBarMode;
   doc["statusBarClock"] = s.statusBarClock;
   doc["clockUtcOffsetQ"] = s.clockUtcOffsetQ;

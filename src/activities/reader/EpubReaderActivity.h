@@ -98,6 +98,12 @@ class EpubReaderActivity final : public Activity {
   int idlePrewarmSpine = -1;
   int idlePrewarmPage = -1;
   unsigned long lastRenderCompleteMs = 0;
+  // Roghj: next-chapter HTML prefetch (see maybePrefetchNextChapter()).
+  int prefetchReadySpine = -1;
+  int prefetchFailedSpine = -1;
+  uint8_t prefetchFailures = 0;
+  unsigned long prefetchLastAttemptRenderMs = 0;
+  void maybePrefetchNextChapter();
   std::shared_ptr<Page> currentOverlayPageCache;
   int currentOverlayPageSpineIndex = -1;
   int currentOverlayPageNumber = -1;

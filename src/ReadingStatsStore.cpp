@@ -27,6 +27,10 @@ constexpr size_t MAX_READING_STATS_AUTO_BACKUPS = 30;
 constexpr unsigned long MAX_READING_GAP_MS = 30UL * 60UL * 1000UL;
 constexpr unsigned long SESSION_HEARTBEAT_MS = 60UL * 1000UL;
 constexpr unsigned long DEFERRED_SAVE_INTERVAL_MS = 30UL * 1000UL;
+// Roghj: while a book is open the deferred save runs only after the reader has
+// been idle this long since the last page turn, so the SD write never sits
+// between a button press and the next page.
+constexpr unsigned long IDLE_SAVE_DELAY_MS = 2UL * 1000UL;
 constexpr uint64_t MIN_SESSION_READING_MS = 3ULL * 60ULL * 1000ULL;
 
 uint8_t clampPercent(const uint8_t percent) { return std::min<uint8_t>(percent, 100); }
@@ -1002,6 +1006,16 @@ bool ReadingStatsStore::isAutoBackupDue() const {
     return false;
   }
 
+  // Roghj: fast path. persistToFile() asks this on every save; the directory scan
+  // below opens every backup file in /exports, which stalled page turns. The day of
+  // the last successful auto-backup is kept in the app state, so trust it while the
+  // interval has not elapsed yet.
+  const uint32_t rememberedBackupDay = APP_STATE.lastReadingStatsBackupDayOrdinal;
+  if (rememberedBackupDay != 0 && dayOrdinal >= rememberedBackupDay &&
+      (dayOrdinal - rememberedBackupDay) < intervalDays) {
+    return false;
+  }
+
   const uint32_t latestBackupDay = getLatestAutoBackupDayOrdinal();
   if (latestBackupDay != 0) {
     if (dayOrdinal <= latestBackupDay) {
@@ -1246,9 +1260,20 @@ void ReadingStatsStore::noteActivity() {
   }
 
   activeSession.lastInteractionMs = nowMs;
-  if (shouldSaveDeferred()) {
-    saveToFile();
+  // Roghj: no save here. noteActivity() runs on every page turn; the deferred save
+  // is done by tickActiveSession() once the reader is idle.
+}
+
+uint64_t ReadingStatsStore::getActiveSessionMs() const {
+  if (!activeSession.active) {
+    return 0;
   }
+  uint64_t total = activeSession.accumulatedMs;
+  if (!activeSession.paused) {
+    const unsigned long elapsedMs = millis() - activeSession.lastInteractionMs;
+    total += std::min(elapsedMs, MAX_READING_GAP_MS);
+  }
+  return total;
 }
 
 void ReadingStatsStore::tickActiveSession() {
@@ -1257,11 +1282,16 @@ void ReadingStatsStore::tickActiveSession() {
   }
 
   const unsigned long nowMs = millis();
-  if ((nowMs - activeSession.lastInteractionMs) < SESSION_HEARTBEAT_MS) {
+  const unsigned long idleMs = nowMs - activeSession.lastInteractionMs;
+  if (idleMs >= SESSION_HEARTBEAT_MS) {
+    noteActivity();
     return;
   }
 
-  noteActivity();
+  // Roghj: deferred save while idle (see IDLE_SAVE_DELAY_MS).
+  if (idleMs >= IDLE_SAVE_DELAY_MS && shouldSaveDeferred()) {
+    saveToFile();
+  }
 }
 
 void ReadingStatsStore::pauseSession() {
@@ -1309,7 +1339,9 @@ void ReadingStatsStore::updateProgress(const uint8_t progressPercent, const bool
   }
 
   markDirty();
-  if (shouldSaveDeferred()) {
+  // Roghj: updateProgress() runs from the page render (render lock held). Inside a
+  // session the save is left to tickActiveSession() so it never delays a page turn.
+  if (!activeSession.active && shouldSaveDeferred()) {
     saveToFile();
   }
 }

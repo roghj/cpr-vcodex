@@ -380,6 +380,8 @@ class CrossPointSettings {
   uint8_t statusBarProgressBarThickness = PROGRESS_BAR_NORMAL;
   uint8_t statusBarTitle = CHAPTER_TITLE;
   uint8_t statusBarBattery = 1;
+  // Roghj: time read in the current session, drawn next to the battery (refreshed on every page render).
+  uint8_t statusBarReadingTime = 1;
   uint8_t xtcStatusBarMode = XTC_STATUS_BAR_HIDE;
   // Clock display in status bar (any board whose RTC probe succeeds)
   uint8_t statusBarClock = STATUS_BAR_CLOCK_HIDE;
@@ -586,8 +588,10 @@ class CrossPointSettings {
   // Show the title and author read from inside each book rather than its
   // filename. Users can disable this to make index rebuilds skip EPUB parsing.
   uint8_t libraryUseMetadata = 1;
-  // Remove a book from the Recent Books list when its End-of-Book screen is reached (0 = off, 1 = on)
-  uint8_t removeReadBooksFromRecents = 0;
+  // Remove finished books from the Recent Books list and the Home screen (0 = off, 1 = on).
+  // Roghj: on by default; persisted under "hideFinishedFromRecents" so the old upstream
+  // key (saved as 0 by default) does not keep it off after the update.
+  uint8_t removeReadBooksFromRecents = 1;
   // Short press Back goes to file browser instead of home (0 = disabled, 1 = enabled)
   uint8_t backShortToFileBrowser = 0;
   // Image rendering mode in EPUB reader
@@ -654,6 +658,7 @@ class CrossPointSettings {
     uint8_t titleMode = HIDE_TITLE;  // STATUS_BAR_TITLE
     bool showBattery = false;
     bool showBatteryPercent = false;
+    bool showReadingTime = false;
     uint8_t clockMode = STATUS_BAR_CLOCK_HIDE;  // STATUS_BAR_CLOCK
     bool clock12h = false;
     uint8_t progressBarMode = HIDE_PROGRESS;  // STATUS_BAR_PROGRESS_BAR
@@ -666,7 +671,7 @@ class CrossPointSettings {
     // Visibility of the text lane. Clock hardware presence is the caller's
     // concern: pass halClock.isAvailable(), or true for layout reservation.
     bool textLaneVisible(bool clockAvailable) const {
-      return showChapterPageCount || showBookProgressPercent || showsTitle() || showBattery ||
+      return showChapterPageCount || showBookProgressPercent || showsTitle() || showBattery || showReadingTime ||
              (showsClock() && clockAvailable);
     }
   };

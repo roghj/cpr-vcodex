@@ -10,6 +10,7 @@
 
 #include <algorithm>
 
+#include "CrossPointSettings.h"
 #include "ReadingStatsStore.h"
 #include "util/BookIdentity.h"
 
@@ -235,6 +236,27 @@ bool RecentBooksStore::pruneMissing() {
   recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(), &RecentBooksStore::isMissing),
                     recentBooks.end());
   return recentBooks.size() != before;
+}
+
+bool RecentBooksStore::pruneCompleted() {
+  if (!SETTINGS.removeReadBooksFromRecents) {
+    return false;
+  }
+  const size_t before = recentBooks.size();
+  recentBooks.erase(std::remove_if(recentBooks.begin(), recentBooks.end(),
+                                   [](const RecentBook& book) {
+                                     const ReadingBookStats* stats = nullptr;
+                                     if (!book.bookId.empty()) stats = READING_STATS.findBook(book.bookId);
+                                     if (!stats && !book.path.empty()) stats = READING_STATS.findBook(book.path);
+                                     return stats != nullptr && stats->completed && stats->lastProgressPercent >= 100;
+                                   }),
+                    recentBooks.end());
+  if (recentBooks.size() == before) {
+    return false;
+  }
+  LOG_DBG("RBS", "Removed %u finished book(s) from recents", static_cast<unsigned>(before - recentBooks.size()));
+  saveToFile();
+  return true;
 }
 
 bool RecentBooksStore::saveToFile() const {

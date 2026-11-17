@@ -152,6 +152,7 @@ int LibraryListActivity::pinnedCount() const {
 }
 
 void LibraryListActivity::resolvePinned() {
+  RECENT_BOOKS.pruneCompleted();
   const auto& books = RECENT_BOOKS.getBooks();
   pinnedTotal = static_cast<uint8_t>(std::min<size_t>(books.size(), RecentBooksStore::MAX_RECENT_BOOKS));
   for (int i = 0; i < pinnedTotal; i++) pinnedAscRows[i] = 0xFFFF;

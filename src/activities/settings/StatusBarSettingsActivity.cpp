@@ -29,6 +29,7 @@ enum MenuItem {
   ITEM_PROGRESS_BAR_THICKNESS,
   ITEM_TITLE,
   ITEM_BATTERY,
+  ITEM_READING_TIME,
   ITEM_XTC_STATUS_BAR,
   ITEM_CLOCK,         // X3 only
   ITEM_CLOCK_FORMAT,  // X3 only
@@ -49,6 +50,7 @@ const StrId menuNames[FULL_MENU_ITEMS] = {
     StrId::STR_PROGRESS_BAR_THICKNESS,
     StrId::STR_TITLE,
     StrId::STR_BATTERY,
+    StrId::STR_READING_TIME,
     StrId::STR_XTC_STATUS_BAR,
     StrId::STR_CLOCK,
     StrId::STR_CLOCK_FORMAT,
@@ -191,6 +193,9 @@ void StatusBarSettingsActivity::handleSelection() {
     case ITEM_BATTERY:
       SETTINGS.statusBarBattery = (SETTINGS.statusBarBattery + 1) % 2;
       break;
+    case ITEM_READING_TIME:
+      SETTINGS.statusBarReadingTime = (SETTINGS.statusBarReadingTime + 1) % 2;
+      break;
     case ITEM_XTC_STATUS_BAR:
       optionPopup.show(StrId::STR_XTC_STATUS_BAR, xtcStatusBarNames, XTC_STATUS_BAR_ITEMS, SETTINGS.xtcStatusBarMode,
                        [this](int idx) {
@@ -266,6 +271,7 @@ void StatusBarSettingsActivity::buildScreen(UiScreen& screen) {
   GUI.setCheckboxRow(rowItems_[ITEM_CHAPTER_PAGE_COUNT], SETTINGS.statusBarChapterPageCount);
   GUI.setCheckboxRow(rowItems_[ITEM_BOOK_PROGRESS_PERCENTAGE], SETTINGS.statusBarBookProgressPercentage);
   GUI.setCheckboxRow(rowItems_[ITEM_BATTERY], SETTINGS.statusBarBattery);
+  GUI.setCheckboxRow(rowItems_[ITEM_READING_TIME], SETTINGS.statusBarReadingTime);
 
   fui::ListProps props;
   props.items = rowItems_;
