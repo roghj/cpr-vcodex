@@ -35,7 +35,7 @@ class OtaUpdater {
     uint32_t hashMs = 0;      // SHA-256 + board-tag scan
     uint32_t finishMs = 0;    // esp_ota_end (image verification) + boot partition
     uint32_t totalMs = 0;
-    uint32_t chunks = 0;      // body callbacks (chunk count)
+    uint32_t chunks = 0;  // body callbacks (chunk count)
     size_t bytes = 0;
     uint64_t writeUs = 0;  // accumulators behind writeMs / hashMs
     uint64_t hashUs = 0;

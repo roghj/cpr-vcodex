@@ -35,9 +35,8 @@ void writeOtaTimingLog(const OtaUpdater& updater, const int result, const int rs
            static_cast<unsigned>(updater.getOtaSize()), static_cast<unsigned long>(st.totalMs),
            static_cast<unsigned long>(st.beginMs), static_cast<unsigned long>(st.downloadMs), kbPerSecond,
            static_cast<unsigned long>(st.writeMs), static_cast<unsigned long>(st.hashMs),
-           static_cast<unsigned long>(st.chunks),
-           static_cast<unsigned long>(st.chunks > 0 ? st.bytes / st.chunks : 0), static_cast<unsigned long>(st.finishMs),
-           renders);
+           static_cast<unsigned long>(st.chunks), static_cast<unsigned long>(st.chunks > 0 ? st.bytes / st.chunks : 0),
+           static_cast<unsigned long>(st.finishMs), renders);
   Storage.mkdir("/.crosspoint");
   Storage.writeFile(OTA_TIMING_LOG_PATH, String(buf));
 }
